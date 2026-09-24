@@ -55,6 +55,9 @@ describe('defaultExec', () => {
     expect(r.stdout).toBe('a $(b) c');
     await expect(defaultExec('sh', ['-c', 'echo boom >&2; exit 3'])).rejects.toThrow(/boom/);
   });
+  it('a child that exits without reading stdin is not an error (no EPIPE crash)', async () => {
+    await expect(defaultExec('true', [], { input: 'x'.repeat(8 * 1024 * 1024) })).resolves.toMatchObject({ stdout: '' });
+  });
 });
 
 describe('prMeta', () => {

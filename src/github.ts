@@ -25,7 +25,10 @@ export const defaultExec: Exec = (cmd, args, opts = {}) =>
         } else resolve({ stdout, stderr });
       },
     );
-    // Always close stdin so tools that optionally read it (gh --body-file -) never hang.
+    // Always close stdin so tools that optionally read it (gh --body-file -) never hang. A child that exits
+    // without reading it makes the write fail with EPIPE; its exit status (above) is what counts, and an
+    // unhandled stream error would take the whole process down.
+    child.stdin?.on('error', () => {});
     child.stdin?.end(opts.input ?? '');
   });
 
