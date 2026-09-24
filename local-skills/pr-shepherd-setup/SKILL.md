@@ -21,6 +21,7 @@ Check, and tell the user how to fix what is missing:
   then `insta login` (opens the browser). `insta status` must show a user.
 - Node 22+ (`node -v`) and dependencies (`npm ci` if `node_modules/` is missing).
 - `gh auth status` (used to read the owner's login; also needed later by the local ship skill).
+- `jq` (`command -v jq`; the deploy installs a Claude Code hook with it): `brew install jq` or the distro package.
 
 ## 2. Owner and org
 
@@ -120,15 +121,16 @@ End with exactly this, filled in:
 > ```
 >
 > It creates the InstaCloud project `<project-name>` if this checkout isn't linked to one yet, then a Postgres
-> service and the bot, and prints the URL. If the bot's published image isn't available yet, it builds the
-> bot from this checkout instead. Then:
-> 1. `https://<url>/healthz` should return 200 within a minute.
-> 2. In Slack: `/invite @<bot-name>` to `#<reviewChannel>`, then `@<bot-name> help`.
-> 3. On each machine you code on: `scripts/install-local.sh --url https://<url> --org <org>`.
+> service and the bot (built from this checkout if the published image isn't available), waits until
+> `/healthz` is healthy, installs the `pr-shepherd-ship` skill on this machine, and prints the bot's URL. Then:
+> 1. In Slack: `/invite @<bot-name>` to `#<reviewChannel>`, then `@<bot-name> help`.
+> 2. On any other machine you code on: `scripts/install-local.sh --url <the printed URL> --org <org>`.
 
 Also mention that their bot's review behaviour lives in `skills/review/SKILL.md` (and the shepherd's in
 `skills/shepherd/SKILL.md`): they can enrich it with team conventions, architecture notes and checklists,
 then deploy from the checkout with `insta deploy . --group pr-shepherd --port 8080`.
 
 Mention `--region <slug>` (from `insta config regions`) if they care where it runs. Do not run
-`scripts/deploy.sh` yourself unless the user asks you to.
+`scripts/deploy.sh` yourself unless the user asks you to. If the user deployed and the local install was skipped
+or failed, offer to run `scripts/install-local.sh` (no arguments needed in this checkout); it edits
+`~/.claude/settings.json` and `~/.codex/AGENTS.md`, so ask first.

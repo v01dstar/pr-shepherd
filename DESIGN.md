@@ -581,6 +581,7 @@ pr-shepherd/
 │   ├── release.sh                     # version bump + tag → release workflow (§11)
 │   ├── slack-manifest.sh              # Slack manifest for this deployment (+ prefilled create link)
 │   ├── install-local.sh               # local ship skill, config, Claude Code hook, Codex rule (§8)
+│   ├── deployment-url.sh              # the linked deployment's URL (deploy.sh, install-local.sh)
 │   └── docker-entrypoint.sh  fake-reviewer.ts
 └── src/
     ├── index.ts          # startup, shutdown, restart reconciliation
@@ -592,7 +593,7 @@ pr-shepherd/
     └── config.ts  db.ts  http.ts  credentials.ts
 ```
 
-`scripts/install-local.sh --url <bot-url> --org <org>` symlinks `pr-shepherd-ship` into `~/.claude/skills` and `~/.codex/skills`, writes `~/.config/pr-shepherd/config` (`PR_SHEPHERD_URL=` and `PR_SHEPHERD_ORG=` lines), adds the Claude Code `PreToolUse` Bash hook running `guard.sh` (idempotent), and a managed rule block in `~/.codex/AGENTS.md`. `--uninstall` reverses it.
+`scripts/install-local.sh --url <bot-url> --org <org>` (run by `scripts/deploy.sh` on the deploying machine, which also waits for `/healthz`; both flags default to the linked deployment and `config.yaml`) symlinks `pr-shepherd-ship` into `~/.claude/skills` and `~/.codex/skills`, writes `~/.config/pr-shepherd/config` (`PR_SHEPHERD_URL=` and `PR_SHEPHERD_ORG=` lines), adds the Claude Code `PreToolUse` Bash hook running `guard.sh` (idempotent), and a managed rule block in `~/.codex/AGENTS.md`. `--uninstall` reverses it.
 
 | Milestone | Scope | Acceptance |
 |---|---|---|

@@ -3,11 +3,12 @@
 # Credentials come from deploy.env, the bot config from config.yaml (the pr-shepherd-setup skill writes it).
 # Values are passed from variables, so they never land in your shell history.
 # Usage: scripts/deploy.sh [--project <name>] [--branch <name>] [--region <slug>] [--env-file <file>] [--config <file>]
-#                          [--from-source]
+#                          [--from-source] [--no-local-install]
 #   --project      InstaCloud project to create when this checkout isn't linked yet
 #                  (default: INSTA_PROJECT from the env file, else bot.name)
 #   --from-source  build the bot from this checkout instead of running the template's published image.
 #                  Automatic when that image can't be pulled anonymously (not released yet, or GHCR package private).
+#   --no-local-install  don't install the pr-shepherd-ship skill on this machine afterwards (scripts/install-local.sh)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -15,6 +16,7 @@ ENV_FILE=deploy.env
 CONFIG=config.yaml
 PROJECT=""
 FROM_SOURCE=""
+LOCAL_INSTALL=1
 EXTRA=()
 BRANCH=()
 REGION=()
@@ -26,7 +28,8 @@ while [[ $# -gt 0 ]]; do
     --branch) EXTRA+=("$1" "${2:?}"); BRANCH=("$1" "$2"); shift 2 ;;
     --region) EXTRA+=("$1" "${2:?}"); REGION=("$1" "$2"); shift 2 ;;
     --from-source) FROM_SOURCE=1; shift ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    --no-local-install) LOCAL_INSTALL=""; shift ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -133,10 +136,42 @@ else
   insta deploy . --group pr-shepherd --port 8080 ${B[@]+"${B[@]}"}
 fi
 
+ORG=$(node -e 'console.log(JSON.parse(process.argv[1]).org)' "$CONFIG_JSON")
+URL=$(scripts/deployment-url.sh ${BRANCH[@]+"${BRANCH[@]}"} || true)
+if [[ -z "$URL" ]]; then
+  cat <<MSG
+
+Deployed, but the bot's URL couldn't be looked up (insta service list). When it shows up:
+  1. https://<url>/healthz → 200 with db, credentials and disk ok.
+  2. On each machine you code on:  scripts/install-local.sh --url https://<url> --org $ORG
+  3. In Slack: /invite @$BOT_NAME to the review channel, then @$BOT_NAME help
+MSG
+  exit 0
+fi
+
+echo "==> waiting for $URL/healthz"
+healthy=""
+for _ in $(seq 1 36); do
+  if curl -fsS -m 10 "$URL/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+  sleep 5
+done
+if [[ -z "$healthy" ]]; then
+  echo "warning: $URL/healthz is not healthy after 3 minutes:" >&2
+  curl -sS -m 10 "$URL/healthz" >&2 || true; echo >&2
+  echo "  logs: insta compute logs pr-shepherd --since 15m ${BRANCH[*]:-}" >&2
+else
+  echo "  healthy"
+fi
+
+if [[ -n "$LOCAL_INSTALL" ]]; then
+  echo "==> installing the pr-shepherd-ship skill on this machine"
+  scripts/install-local.sh --url "$URL" --org "$ORG"
+fi
+
 cat <<MSG
 
+$BOT_NAME is at $URL
 Next:
-  1. Open the deployment URL printed above + /healthz → 200 with db, credentials and disk ok (give it a minute).
-  2. On each machine you code on:  scripts/install-local.sh --url https://<deployment> --org $(node -e 'console.log(JSON.parse(process.argv[1]).org)' "$CONFIG_JSON")
-  3. In Slack: @$BOT_NAME help
+  1. In Slack: /invite @$BOT_NAME to the review channel, then @$BOT_NAME help
+  2. On other machines you code on:  scripts/install-local.sh --url $URL --org $ORG
 MSG

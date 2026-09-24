@@ -4,8 +4,10 @@
 #   - writes ~/.config/pr-shepherd/config (PR_SHEPHERD_URL, PR_SHEPHERD_ORG)
 #   - Claude Code: a PreToolUse(Bash) hook running guard.sh, so PRs in the org always go through the skill
 #   - Codex: the same rule as a managed block in ~/.codex/AGENTS.md
-# Usage: scripts/install-local.sh --url https://<your-bot> --org <github-org>
+# Usage: scripts/install-local.sh [--url https://<your-bot>] [--org <github-org>]
 #        scripts/install-local.sh --uninstall
+# scripts/deploy.sh runs it for you. Without --url / --org it uses, in order: the deployment this checkout is
+# linked to (scripts/deployment-url.sh) and the org in config.yaml, then the values already installed.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,12 +26,18 @@ while [[ $# -gt 0 ]]; do
     --url) URL="${2:?--url needs a value}"; shift 2 ;;
     --org) ORG="${2:?--org needs a value}"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
+if [[ $UNINSTALL -eq 0 ]]; then
+  [[ -n "$URL" ]] || URL=$("$REPO/scripts/deployment-url.sh" 2>/dev/null || true)
+  if [[ -z "$ORG" && -s "$REPO/config.yaml" ]] && command -v node >/dev/null; then
+    ORG=$(cd "$REPO" && node -e 'process.stdout.write(String(require("yaml").parse(require("fs").readFileSync("config.yaml", "utf8"))?.org ?? ""))' 2>/dev/null || true)
+  fi
+fi
 # Existing values survive a partial re-run (e.g. only --url).
 if [[ -f "$CONF" ]]; then
   [[ -n "$URL" ]] || URL=$(sed -n 's/^PR_SHEPHERD_URL=//p' "$CONF")

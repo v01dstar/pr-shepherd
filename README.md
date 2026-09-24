@@ -127,23 +127,31 @@ directly, stores the variables on the bot service and builds it from this checko
 `--from-source` forces that. If the linked project was deleted, the script creates a new one. The project is named after the bot unless `INSTA_PROJECT` is set in `deploy.env` (or `--project <name>` is passed); inside it the
 services are always `db` and `pr-shepherd`. Add `--region <slug>` to choose a region (`insta config regions`).
 
+When the deploy is done it looks up the bot's URL, waits for `/healthz`, and installs the local ship skill on
+this machine (step 5; skip with `--no-local-install`). It ends by printing the URL.
+
 Prefer doing it by hand? Copy `config.example.yaml` to `config.yaml`, fill it in, and check it with
 `npm run check-config`. Or skip the script and pass variables yourself:
 `insta template deploy https://github.com/v01dstar/pr-shepherd --set NAME=value …` (config as one-line JSON).
 
 ### 4. Check it and invite the bot
 
-- `https://<your-deployment>/healthz` returns `200` with `db`, `credentials` (github, slack, claude) and
-  `diskFreePct` ok within a minute. `/livez` only says the process and database are up.
+- `scripts/deploy.sh` already waited for `https://<your-deployment>/healthz`: `200` with `db`, `credentials`
+  (github, slack, claude) and `diskFreePct` ok. `/livez` only says the process and database are up.
+  `scripts/deployment-url.sh` prints the URL again.
 - In Slack: `/invite @<bot-name>` into the review channel, then `@<bot-name> help`.
 
 ### 5. Install the local ship skill
 
-On each machine you code on (needs `gh auth login`, and `jq` for the hook):
+`scripts/deploy.sh` does this on the machine you deploy from. On every other machine you code on (needs
+`gh auth login`, and `jq` for the hook), clone the repo and run:
 
 ```bash
 scripts/install-local.sh --url https://<your-deployment> --org your-org
 ```
+
+In the deploying checkout, `scripts/install-local.sh` with no arguments finds both (the linked deployment
+and `config.yaml`); run it again after the URL changes.
 
 This symlinks `pr-shepherd-ship` into `~/.claude/skills` and `~/.codex/skills` and writes
 `~/.config/pr-shepherd/config` (`PR_SHEPHERD_URL=…`, `PR_SHEPHERD_ORG=…`). It also adds a Claude Code
@@ -345,7 +353,7 @@ skills/           server-side skills, loaded as the local plugin `pr-shepherd`
 local-skills/
   pr-shepherd-ship/ local skill: open a PR and register it (+ guard.sh hook)
 migrations/       forward-only SQL
-scripts/          deploy.sh update-secret.sh release.sh slack-manifest.sh install-local.sh docker-entrypoint.sh fake-reviewer.ts
+scripts/          deploy.sh deployment-url.sh update-secret.sh release.sh slack-manifest.sh install-local.sh docker-entrypoint.sh fake-reviewer.ts
 .github/workflows/ ci.yml, release.yml
 insta.template.yaml  InstaCloud template (pr-shepherd)
 test/             vitest; fixtures in the reply formats of real reviewer bots (synthetic content)
