@@ -1,0 +1,70 @@
+# InstaCloud template for pr-shepherd: a Slack bot that shepherds your PRs through bot reviews.
+#   insta template deploy https://github.com/v01dstar/pr-shepherd --set GH_TOKEN=… --set …
+#
+# SINGLE INSTANCE ONLY. The bot holds one Slack Socket Mode connection and runs one in-process
+# scheduler; a second replica (or a second deployment using the same Slack app) would split Slack
+# events between connections and double-schedule work. Never scale this service beyond 1.
+#
+# version and the image tag are bumped together by scripts/release.sh; the image is built and pushed
+# to GHCR by .github/workflows/release.yml when the vX.Y.Z tag is pushed.
+code: pr-shepherd
+version: "0.0.1"
+maintainer: v01dstar
+sourceRepo: https://github.com/v01dstar/pr-shepherd
+meta:
+  name: pr-shepherd
+  tagline: Slack bot that shepherds your GitHub PRs through reviewer bots, fixes, rebases and merge, powered by Claude
+  category: devtools
+  tags: [github, slack, code-review, pull-requests, claude, agent, bot]
+# Claude auth: exactly one of the two.
+constraints:
+  - oneOf: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY]
+services:
+  db:
+    type: postgres
+  pr-shepherd:
+    type: web
+    image: ghcr.io/v01dstar/pr-shepherd:0.0.1
+    port: 8080
+    # /livez = process + database. /healthz also fails on credential problems, which should DM the
+    # owner, not fail the deploy's health gate.
+    healthcheck: /livez
+    volume: true
+    env:
+      platform:
+        DATABASE_URL: ${{services.db.DATABASE_URL}}
+      fixed:
+        DATA_DIR: /data
+        CLAUDE_CONFIG_DIR: /data/claude
+      required:
+        GH_TOKEN:
+          description: >-
+            GitHub fine-grained personal access token (github.com/settings/personal-access-tokens/new).
+            Resource owner = your org; repositories = all (or the ones the bot may touch). Repository
+            permissions: Contents RW, Pull requests RW, Issues RW, Commit statuses R, Actions R,
+            Metadata R; Workflows = No access. It acts as you: the owner's PRs are pushed and merged with it.
+        SLACK_BOT_TOKEN:
+          description: >-
+            Slack Bot User OAuth Token (xoxb-…). Create the app from slack-manifest.yaml
+            (scripts/slack-manifest.sh <bot-name> to rename it), install it, then OAuth & Permissions.
+        SLACK_APP_TOKEN:
+          description: >-
+            Slack App-Level Token (xapp-…) with scope connections:write, from Basic Information →
+            App-Level Tokens. Used for Socket Mode.
+        PR_SHEPHERD_CONFIG:
+          description: >-
+            The bot config: YAML text, or a one-line JSON object (org, owner, reviewChannel, reviewers,
+            approvers, …). Start from config.example.yaml in the repo. The PR_SHEPHERD_* variables below
+            override single fields.
+      optional:
+        CLAUDE_CODE_OAUTH_TOKEN: Claude subscription token from `claude setup-token` (set this or ANTHROPIC_API_KEY)
+        ANTHROPIC_API_KEY: Anthropic API key (set this or CLAUDE_CODE_OAUTH_TOKEN)
+        PR_SHEPHERD_BOT_NAME: Overrides bot.name, the bot's name in Slack messages, PR comments and commit trailers (default pr-shepherd)
+        PR_SHEPHERD_ORG: Overrides org, the GitHub org whose PRs are accepted
+        PR_SHEPHERD_OWNER_GITHUB: Overrides owner.github, the owner's GitHub login (must match GH_TOKEN's user)
+        PR_SHEPHERD_OWNER_SLACK: Overrides owner.slack, the owner's Slack member id (U…)
+        PR_SHEPHERD_OWNER_NAME: Overrides owner.name, the owner's display name (default owner.github)
+        PR_SHEPHERD_REVIEW_CHANNEL: Overrides reviewChannel, the Slack channel where review requests are posted
+        PR_SHEPHERD_MODEL: Overrides agent.model, the Claude model for agent runs (default the Claude Code default)
+        PR_SHEPHERD_EFFORT: Overrides agent.effort, the reasoning effort (low, medium, high, xhigh, max)
+        LOG_LEVEL: pino log level (trace, debug, info, warn, error; default info)

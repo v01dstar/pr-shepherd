@@ -1,0 +1,40 @@
+# Slack app manifest for pr-shepherd (DESIGN §11.1, README "Slack app").
+# Create at https://api.slack.com/apps → Create New App → From a manifest, and paste this.
+# To give your bot its own name, generate the manifest instead of editing this file:
+#   scripts/slack-manifest.sh [bot-name]    (default: bot.name from config.yaml, else pr-shepherd)
+# Use a separate app per deployment (e.g. <name>-dev for a dev env): Socket Mode splits events
+# between every connection using the same app.
+display_information:
+  name: pr-shepherd
+  description: Shepherds your PRs through reviewer bots to merge; reviews or approves when tagged.
+features:
+  bot_user:
+    display_name: pr-shepherd
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - reactions:read
+      - reactions:write
+      - channels:read
+      - channels:history
+      - groups:read
+      - groups:history
+      - im:write
+      - im:history
+      - users:read            # bots.info: resolve bot_id → user id for reviewer replies
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
+      - reaction_added
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

@@ -1,0 +1,167 @@
+{
+  "_source": "Message formats (first lines, emoji, link shapes) mirror real reviewer bots in the review channel; all PR numbers, repos, SHAs and prose are synthetic.",
+  "cases": [
+    {
+      "bot": "review-bot",
+      "expect": "activity",
+      "text": ":mag: starting code review on <https://github.com/example-org/example-api/pull/528> …"
+    },
+    {
+      "bot": "review-bot",
+      "expect": "activity",
+      "text": ":mag: Starting review of example-org/example-api#528 (rate limiter refactor) — reading my prior-round notes first."
+    },
+    {
+      "bot": "review-bot",
+      "expect": "activity",
+      "text": ":hourglass_flowing_sand: all review slots are busy — queued, will start as soon as one frees up…"
+    },
+    {
+      "bot": "review-bot",
+      "expect": "activity",
+      "text": "Reviewing example-org/example-e2e#141 (rate limiter smoke test) — round 2; diffing the new head against my r1 review at 1a2b3c4."
+    },
+    {
+      "bot": "review-bot",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-api/pull/528#pullrequestreview-1000000001",
+      "text": ":octagonal_sign: review verdict: *request_changes*\nreview: <https://github.com/example-org/example-api/pull/528#pullrequestreview-1000000001>\nReviewed example-org/example-api#528 (rate limiter refactor) at head d4e5f6a7 — one new commit since my last round … One Critical stands: the token bucket can go negative under concurrent refills …"
+    },
+    {
+      "bot": "review-bot",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-e2e/pull/141#pullrequestreview-1000000002",
+      "text": ":white_check_mark: review verdict: *approved*\nreview: <https://github.com/example-org/example-e2e/pull/141#pullrequestreview-1000000002>\nRound 2 on example-e2e#141 at 9f8e7d6 — COMMENT/approved, zero Critical. … the new test fails without the fix and passes with it …"
+    },
+    {
+      "bot": "codex-bot",
+      "expect": "activity",
+      "text": ":mag: reviewing <https://github.com/example-org/example-api/pull/528> with Codex…"
+    },
+    {
+      "bot": "codex-bot",
+      "expect": "activity",
+      "text": ":microscope: analyzing with Codex…"
+    },
+    {
+      "bot": "codex-bot",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-api/pull/528#pullrequestreview-1000000003",
+      "text": ":octagonal_sign: verdict: *request_changes*\nreview: <https://github.com/example-org/example-api/pull/528#pullrequestreview-1000000003>\nThe refactor is well structured … A missing lock around the refill path is Critical, so changes are requested."
+    },
+    {
+      "bot": "codex-bot",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-e2e/pull/141#pullrequestreview-1000000004",
+      "text": ":white_check_mark: verdict: *approved*\nreview: <https://github.com/example-org/example-e2e/pull/141#pullrequestreview-1000000004>\nNo critical issues found. …"
+    },
+    {
+      "bot": "summary-bot-a",
+      "expect": "activity",
+      "text": "Queued — 1 review ahead of this one."
+    },
+    {
+      "bot": "summary-bot-a",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-e2e/pull/144#pullrequestreview-1000000005",
+      "text": ":white_check_mark: Reviewed <https://github.com/example-org/example-e2e/pull/144|example-e2e#144> — no blocking findings (0 min)\n\nThis adds a retry test for the upload endpoint … I found no problems and would approve it.\n\nFull review: <https://github.com/example-org/example-e2e/pull/144#pullrequestreview-1000000005>"
+    },
+    {
+      "bot": "summary-bot-a",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-lab/pull/4#pullrequestreview-1000000006",
+      "text": ":white_check_mark: Reviewed <https://github.com/example-org/example-lab/pull/4|example-lab#4> — no blocking findings (1 minor, 0 min)\n\nI'm approving this round. … the swallowed parse error is now surfaced …\n\nFull review: <https://github.com/example-org/example-lab/pull/4#pullrequestreview-1000000006>"
+    },
+    {
+      "bot": "summary-bot-b",
+      "expect": "activity",
+      "text": "Queued — 1 review ahead of this one."
+    },
+    {
+      "bot": "summary-bot-b",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-e2e/pull/144#pullrequestreview-1000000007",
+      "text": ":x: Reviewed <https://github.com/example-org/example-e2e/pull/144|example-e2e#144> — changes requested (1 important, 3 min)\n\nThe new test depends on wall-clock timing … so I would not merge it as-is.\n\nFull review: <https://github.com/example-org/example-e2e/pull/144#pullrequestreview-1000000007>"
+    },
+    {
+      "bot": "summary-bot-b",
+      "expect": "done",
+      "link": "https://github.com/example-org/example-cli/pull/288#pullrequestreview-1000000008",
+      "text": ":white_check_mark: Reviewed <https://github.com/example-org/example-cli/pull/288|example-cli#288> — no blocking findings (3 min)\n\nThis adds a --json flag to the status command …\n\nFull review: <https://github.com/example-org/example-cli/pull/288#pullrequestreview-1000000008>"
+    }
+  ],
+  "approve": [
+    {
+      "bot": "review-bot",
+      "expect": "done",
+      "login": "reviewer-account",
+      "text": ":white_check_mark: <https://github.com/example-org/example-docs/pull/29> — approved as reviewer-account (<https://github.com/example-org/example-docs/pull/29#pullrequestreview-1000000009>)",
+      "link": "https://github.com/example-org/example-docs/pull/29#pullrequestreview-1000000009"
+    },
+    {
+      "bot": "review-bot",
+      "expect": "error",
+      "text": ":x: <https://github.com/example-org/example-docs/pull/29> — failed (not mergeable): Review cannot be requested"
+    }
+  ],
+  "g3_commands": [
+    {
+      "from": "another-team-bot",
+      "text": "<@BOT> approve <https://github.com/example-org/example-docs/pull/29>",
+      "expect": {
+        "kind": "approve",
+        "pr": "example-org/example-docs#29"
+      }
+    },
+    {
+      "from": "a teammate",
+      "text": "<@BOT> approve this <https://github.com/example-org/example-web/pull/174>",
+      "expect": {
+        "kind": "approve",
+        "pr": "example-org/example-web#174"
+      }
+    },
+    {
+      "from": "review-bot",
+      "text": "<@BOT> please approve <https://github.com/example-org/example-app/pull/168> - workflow approved",
+      "expect": {
+        "kind": "approve",
+        "pr": "example-org/example-app#168"
+      }
+    },
+    {
+      "from": "a teammate",
+      "text": "<@BOT> review <https://github.com/example-org/example-api/pull/528>",
+      "expect": {
+        "kind": "review",
+        "pr": "example-org/example-api#528"
+      }
+    },
+    {
+      "from": "template-builder",
+      "text": "<@BOT> review this <https://github.com/example-org/example-web/pull/149>",
+      "expect": {
+        "kind": "review",
+        "pr": "example-org/example-web#149"
+      }
+    },
+    {
+      "from": "another-team-bot",
+      "text": "<@OTHER> <@BOT> please review: <https://github.com/example-org/example-cli/pull/288>\nstatus --json prints one object per service; without a linked project it exits 2.",
+      "expect": {
+        "kind": "review",
+        "pr": "example-org/example-cli#288",
+        "context": "status --json prints one object per service; without a linked project it exits 2."
+      }
+    },
+    {
+      "from": "another-team-bot",
+      "text": "<@BOT> pushed fixes, please re-review: <https://github.com/example-org/example-lab/pull/4>\nParse errors are now reported with the line number; the retry loop is capped at 3.",
+      "expect": {
+        "kind": "review",
+        "pr": "example-org/example-lab#4"
+      }
+    }
+  ],
+  "_note": "expect is the bot-agnostic kind from DESIGN §5.3: done | error | activity. The approve failure case is synthesized from review-bot's documented failure format."
+}

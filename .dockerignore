@@ -1,0 +1,16 @@
+# The image copies only what the Dockerfile names; this keeps the rest out of the build context
+# (insta deploy . uploads it), above all local credentials and config.
+node_modules
+dist
+.git
+.insta*
+.claude
+.agents
+.codex
+config.yaml
+config.*.yaml
+deploy.env
+deploy.*.env
+.env
+*.backup
+slack-app-manifest.yaml

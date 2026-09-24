@@ -1,0 +1,39 @@
+# pr-shepherd config template — see DESIGN.md §11. Not secret; secrets live in InstaCloud (§11.1).
+# The real config is kept out of git:
+#   - local runs: copy this file to config.yaml (gitignored) and fill in your Slack/GitHub ids;
+#     CONFIG_PATH selects another file (e.g. config.dev.yaml).
+#   - deployments: put the text (YAML, or a one-line JSON object) in the PR_SHEPHERD_CONFIG secret,
+#     which scripts/deploy.sh and `scripts/update-secret.sh config` do from config.yaml.
+# When PR_SHEPHERD_CONFIG is set it takes precedence over CONFIG_PATH.
+# Env overrides applied on top: PR_SHEPHERD_BOT_NAME, PR_SHEPHERD_ORG, PR_SHEPHERD_OWNER_GITHUB,
+# PR_SHEPHERD_OWNER_SLACK, PR_SHEPHERD_OWNER_NAME, PR_SHEPHERD_REVIEW_CHANNEL.
+#
+# Required: org, owner {github, slack}, reviewChannel, reviewers, approvers. Everything else is optional;
+# the values below for the optional keys are the defaults.
+bot: { name: pr-shepherd }          # this deployment's display name in Slack / PR comments / commit trailers
+org: your-org
+owner: { github: owner-login, slack: UOWNER, name: Owner }   # name defaults to github
+reviewChannel: pr-review
+# Every PR tags ALL reviewers below; re-review rounds go only to those whose comments were handled.
+# Templates: {slack} = the bot's member id (write <@{slack}> to mention it), {url} = the PR, {summary} = the
+# round summary (templates without it get the summary as a PR comment), {mentions} = every bot sharing that
+# exact template, merged into one message, e.g.
+#   request: "{mentions} please review: {url}\n{summary}"   rerequest: "{mentions} pushed fixes, please re-review: {url}\n{summary}"
+reviewers:
+  - { name: review-bot, slack: UREVIEWBOT, request: "<@{slack}> review {url}", rerequest: "<@{slack}> review {url}" }
+  - { name: codex-bot,  slack: UCODEXBOT,  request: "<@{slack}> review {url}", rerequest: "<@{slack}> review {url}" }
+# Who approves your PRs (GitHub does not allow self-approval). All of them are asked at once unless the agent
+# names a subset; the first approval wins.
+approvers:
+  - { name: review-bot, slack: UREVIEWBOT, request: "<@{slack}> approve {url}" }
+  - { name: codex-bot,  slack: UCODEXBOT,  request: "<@{slack}> approve {url}" }
+excludeRepos: []
+# Model and reasoning effort for agent runs; unset = the Claude Code default. `shepherd` (your PRs) and
+# `review` (reviewing others' PRs) override the shared values. effort: low | medium | high | xhigh | max.
+# agent:
+#   model: claude-opus-5-5
+#   effort: high
+#   fallbackModel: claude-sonnet-5
+#   review: { effort: medium }            # e.g. same model, lighter reasoning for others' PRs
+limits: { maxRounds: 4, maxRunsPerPr: 30, maxTurns: 60, shepherdConcurrency: 1, reviewConcurrency: 2 }
+timing: { debounceSec: 30, ackTimeoutMin: 15, replyTimeoutMin: 120, sweepMin: 30, reviewIdleDays: 7, reportAt: "09:00", timezone: America/Los_Angeles }
