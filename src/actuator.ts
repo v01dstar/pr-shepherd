@@ -275,16 +275,6 @@ export function createActuator(deps: Deps): ActuatorHandle {
     await store.addEvent({ prId: pr.id, kind: 'continue', payload: { rejected: reason }, dedupeKey: `rejected:${run.id}` });
   }
 
-  async function postSummary(pr: Pr, output: ShepherdOutput, thread: ReviewRequest | undefined) {
-    const items = output.handled.flatMap((h) => h.items);
-    if (!items.length || !thread) return;
-    const count = (a: string) => items.filter((i) => i.action === a).length;
-    const rounds = Object.values(await store.roundsByBot(pr.id));
-    const sha = items.filter((i) => i.action === 'fix' && i.commit).at(-1)?.commit;
-    const head = `r${Math.max(0, ...rounds)}${sha ? ` @${sha.slice(0, 7)}` : ''}`;
-    await slack.post(thread.channel, `${head}: fix ${count('fix')} · reply ${count('reply')} · escalate ${count('escalate')}`, thread.requestTs);
-  }
-
   return {
     async apply(run) {
       if (run.appliedAt || run.prId == null || !run.output || !('next' in run.output)) return;
@@ -295,11 +285,8 @@ export function createActuator(deps: Deps): ActuatorHandle {
         await store.updateRun(run.id, { appliedAt: now() });
         return;
       }
-      // The summary goes to the thread the agent was reacting to, i.e. the latest request before this run's.
-      const thread = (await allRequests(pr.id)).filter((r) => r.runId !== run.id && !isPending(r)).at(-1);
       const outcome = await execute(pr, run, output);
       if ('rejected' in outcome) await reject(pr, run, outcome.rejected);
-      else await postSummary(pr, output, thread).catch((e: unknown) => log.warn({ err: e }, 'summary line failed'));
       await store.updateRun(run.id, { appliedAt: now() });
     },
 

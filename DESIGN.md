@@ -229,7 +229,6 @@ The schema is defined with zod in `src/output.ts`. `z.toJSONSchema()` produces t
   - Result is `error_max_structured_output_retries`, or a pre-execution check fails → resume once, telling the agent why; if it fails again → `needs_human`;
   - `error_max_turns` → deliver `continue` automatically;
   - Merge failure → deliver `merge_failed` with gh's error message.
-- After each execution, post a one-line summary in the PR's most recent request thread (for example `r3 @def5678: fix 4 · reply 1 · escalate 0`).
 
 ### 5.6 State and budget
 

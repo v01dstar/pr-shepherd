@@ -242,20 +242,6 @@ describe('request_review', () => {
     expect(posts[1]!.text).toBe(`<@UREVIEWBOT> review ${URL}`);
   });
 
-  it('posts the handled summary line into the latest request thread', async () => {
-    const pr = await newPr();
-    await actuator.apply(await runWith(pr, review(['codex-bot'])));
-    const handled = [{
-      reviewer: 'codex-bot', review_url: 'u',
-      items: [
-        { url: 'a', severity: 'Critical' as const, action: 'fix' as const, commit: 'def5678abc', note: '' },
-        { url: 'b', severity: 'Suggestion' as const, action: 'reply' as const, commit: null, note: '' },
-        { url: 'c', severity: 'Suggestion' as const, action: 'escalate' as const, commit: null, note: 'conflict' },
-      ],
-    }];
-    await actuator.apply(await runWith(pr, { action: 'wait', minutes: 10, reason: 'ci' }, handled));
-    expect(posts.at(-1)).toMatchObject({ threadTs: '1000.0', text: 'r1 @def5678: fix 1 · reply 1 · escalate 1' });
-  });
 });
 
 describe('request_approve', () => {
