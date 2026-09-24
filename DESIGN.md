@@ -133,7 +133,7 @@ Authorization: Bearer <local gh auth token>
 
 Follows the `#pr-review` convention: **each request is a new top-level message**, and the bot replies in its thread. The harness maps replies to the PR and bot via `review_requests.request_ts`.
 
-**Every PR tags every configured reviewer** (the owner can narrow one PR with `set <pr> reviewers=…`); re-review rounds go only to the bots whose comments were handled. There is no default subset: list only the bots that should review every PR.
+**Every PR tags every configured reviewer** (the owner can narrow one PR with `set <pr> reviewers=…`); re-review rounds go only to the bots whose findings led to a code change, and are skipped when every reviewer approved and the push only applies their suggestions or small corrections (the approvers then see the final head). There is no default subset: list only the bots that should review every PR.
 
 **Sending requests**: each reviewer has two templates in config, `request` (first time) and `rerequest` (re-review). Bots whose templates use `{mentions}` are combined into one message (for example summary-bot-a + summary-bot-b); bots whose templates use `<@{slack}>` each get their own message. For templates without `{summary}`, the agent's summary is posted as a PR comment, which the bot reads during review.
 

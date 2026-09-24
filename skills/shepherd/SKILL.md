@@ -80,10 +80,16 @@ Read it first on every run, update it last.
    - `continue`: you ran out of turns last time; pick up from the notes.
    - `restarted`: see below.
 4. Decide `next`:
-   - You changed code or resolved conflicts → `request_review`; reviewers = the bots whose reviews you
-     handled this run (all reviewers after a conflict resolution); `resend: false`.
-   - Every reviewer's latest review approves, no unresolved threads, CI green → `request_approve` (asks every
-     configured approver; pass `approvers: [...]` only to ask a subset, e.g. to re-ask one that stalled).
+   - Re-review only when it adds something. Every reviewer's verdict is approved and your push only applies
+     their Suggestions or small corrections (wording, comments, a local fix with no design change) → no new
+     review round: post a short PR comment listing what changed since the approvals (`gh pr comment`), then
+     `request_approve` once CI is green (`wait` for it first); the approvers look at the final head.
+   - Otherwise, when you changed code → `request_review`; reviewers = only the bots whose findings led to the
+     change (a bot you only replied to is not re-asked); `resend: false`. After resolving rebase conflicts
+     → all reviewers.
+   - Every reviewer's latest verdict approves (an approval followed only by small fixes, as above, counts),
+     no unresolved threads, CI green → `request_approve` (asks every configured approver; pass
+     `approvers: [...]` only to ask a subset, e.g. to re-ask one that stalled).
    - Approved, no push since the approval, required checks green, `CLEAN` → `merge`.
    - Waiting on CI or on another reviewer → `wait` (≤ 30 min; reviewer replies wake you early).
    - Anything needing the owner → `escalate` with a precise reason.

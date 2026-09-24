@@ -207,7 +207,7 @@ config fails startup.
 | `owner.github`, `owner.slack` | yes | | Your GitHub login and Slack user id |
 | `owner.name` | no | `owner.github` | How the agent refers to you |
 | `reviewChannel` | yes | | Slack channel for review requests |
-| `reviewers[]` | yes | | `{name, slack, request, rerequest}`. **Every PR tags all of them** (re-review rounds only the ones whose comments were handled; `set <pr> reviewers=…` narrows one PR), so list only bots that should review every PR. Templates use `{url}`, `{summary}`, `<@{slack}>` (own message per bot) or `{mentions}` (bots sharing one message) |
+| `reviewers[]` | yes | | `{name, slack, request, rerequest}`. **Every PR tags all of them** (re-review rounds only the ones whose findings changed the code, none after approvals plus small fixes; `set <pr> reviewers=…` narrows one PR), so list only bots that should review every PR. Templates use `{url}`, `{summary}`, `<@{slack}>` (own message per bot) or `{mentions}` (bots sharing one message) |
 | `approvers` | yes | | list of `{name, slack, request}`: the bots or people who can approve your PRs (GitHub forbids approving your own). All are asked at once unless the agent names a subset; the first approval wins. |
 | `excludeRepos` | no | `[]` | `owner/repo` entries to refuse |
 | `agent` | no | Claude Code defaults | `{model, effort, fallbackModel, shepherd: {model, effort}, review: {model, effort}}`: model and reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`) for agent runs; `shepherd` (your PRs) and `review` (others' PRs) override the shared values |

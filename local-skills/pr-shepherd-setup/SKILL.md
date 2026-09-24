@@ -83,7 +83,7 @@ approvers sharing a `{mentions}` template get one combined message). All of them
 first approval wins; write them as a list under `approvers:`.
 
 Tell the user plainly: **every PR tags all reviewers in the list** (re-review rounds go only to the bots
-whose comments were handled). There is no per-PR selection by default, so list only the bots that should
+whose findings changed the code, and are skipped when all approved and only small fixes followed). There is no per-PR selection by default, so list only the bots that should
 review every PR. (The owner can still narrow a single PR later with `@<bot-name> set <pr> reviewers=…`.)
 
 ## 5. Optional settings

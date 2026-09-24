@@ -14,7 +14,8 @@ bot: { name: pr-shepherd }          # this deployment's display name in Slack / 
 org: your-org
 owner: { github: owner-login, slack: UOWNER, name: Owner }   # name defaults to github
 reviewChannel: pr-review
-# Every PR tags ALL reviewers below; re-review rounds go only to those whose comments were handled.
+# Every PR tags ALL reviewers below; re-review rounds go only to those whose findings changed
+# the code (none when all approved and only small fixes followed).
 # Templates: {slack} = the bot's member id (write <@{slack}> to mention it), {url} = the PR, {summary} = the
 # round summary (templates without it get the summary as a PR comment), {mentions} = every bot sharing that
 # exact template, merged into one message, e.g.
