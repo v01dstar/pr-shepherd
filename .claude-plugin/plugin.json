@@ -1,5 +1,5 @@
 {
   "name": "pr-shepherd",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "pr-shepherd skills: shepherd (the owner's PRs), review (G3). Loaded via the Agent SDK plugins option (DESIGN §5.4)."
 }
