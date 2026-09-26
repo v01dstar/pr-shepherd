@@ -8,6 +8,10 @@ display_information:
   name: pr-shepherd
   description: Shepherds your PRs through reviewer bots to merge; reviews or approves when tagged.
 features:
+  app_home:                   # Messages tab open, so the owner can DM the bot and reply in a PR's DM thread
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: pr-shepherd
     always_online: true
