@@ -38,8 +38,10 @@ const slack: SlackPort = {
   async react(_c, ts, emoji) {
     reactions.push(`${ts}:${emoji}`);
   },
+  async delete() {},
   async dm(_u, text) {
     dms.push(text);
+    return { channel: 'D-owner', ts: `${9000 + dms.length}.0` };
   },
   async replies() {
     return threadReplies;

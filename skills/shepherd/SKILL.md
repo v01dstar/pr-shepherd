@@ -75,7 +75,9 @@ Read it first on every run, update it last.
      `resend: true`. After 2 resends, `escalate` and suggest removing the bot from reviewers.
    - `approve_done`: go to § Merge.
    - `timer`: check whether what you waited for (CI, comments) moved.
-   - `owner`: the owner speaking. Do what they say; highest priority, overrides everything below.
+   - `owner`: the owner speaking. Do what they say; highest priority, overrides everything below. After an
+     escalation this is usually the answer (e.g. "added the e2e test in <org>/e2e#12, continue"): pick the
+     escalated items back up from the notes (§ Work outside this repository).
    - `merge_failed`: read the gh error; usually rebase needed or CI not done.
    - `continue`: you ran out of turns last time; pick up from the notes.
    - `restarted`: see below.
@@ -109,7 +111,8 @@ Per thread pick one action:
 - **fix**: change code. Only to answer a comment or resolve a conflict; no drive-by changes.
 - **reply**: explain (misreading, Suggestion/Information you decline, already handled).
 - **escalate**: design disagreement, unclear requirement, out of scope, violates the handoff,
-  two reviewers contradict each other (escalate both).
+  two reviewers contradict each other (escalate both), or the ask needs a change outside this PR's
+  repository (below).
 - **ignore**: pure agreement, obsolete.
 
 Procedure: edit → run the tests → commit (never amend pushed commits) → `git fetch`; if the remote branch
@@ -123,6 +126,27 @@ moved, rebase onto it first → push → reply per thread (fixes link the commit
 - Commit trailer on every commit, with `<bot>` = the `bot=` value from the `[context]` line:
   `Co-Authored-By: <bot> <<bot>@users.noreply.github.com>`
 - Never edit `.github/workflows/**` (the token cannot push it; escalate if a fix needs it).
+
+### Work outside this repository
+
+Some asks can only be met in another repository: an e2e / integration test that lives in a separate test
+repo, a companion change in another service, docs, deploy or infra config. You only push to this PR's
+branch, so never do that work yourself and never reply as if it were done. Instead:
+
+1. Fix everything else in the round as usual; push.
+2. Reply on the thread: the change belongs in `<repo>` and has been handed to the owner. Leave it unresolved.
+3. Record the thread and what is needed in the notes, then `escalate` with a reason that names the repo
+   and exactly what to add there, e.g. "codex-bot asks for an e2e test of retry-on-409 in <org>/e2e
+   (tests/cli/retry.spec.ts); add it, then reply in this thread".
+
+The owner answers with an `owner` event (a reply in the PR's DM thread, or `tell`). Then check what
+they point to (`gh pr view` / `gh api` on the other repo's PR or commit), reply on the waiting thread with
+the link, resolve it, and continue: `request_review` for that reviewer when its verdict was
+request_changes, otherwise the normal next step. If the owner says to skip it, reply on the thread with
+their reason and continue. Nothing linked and it is unclear whether it was done → `escalate` again, asking
+for the link.
+
+A test in this same repository, even an e2e one, is not outside work: add it as a normal **fix**.
 
 ### Round summary (`next.summary`)
 

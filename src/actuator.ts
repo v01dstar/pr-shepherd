@@ -5,6 +5,7 @@ import type { Config } from './config.js';
 import type { Actuator, GithubPort, Pr, Repos, ReviewRequest, Run, SlackPort, Store, Timer } from './contracts.js';
 import { stripHandoff } from './github.js';
 import { log } from './log.js';
+import { createNotifyPr } from './notify.js';
 import type { Next, ShepherdOutput } from './output.js';
 
 type Deps = {
@@ -51,7 +52,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
   const { config, store, slack, github, repos } = deps;
   const now = deps.now ?? (() => new Date());
   const later = (min: number) => new Date(now().getTime() + min * 60_000);
-  const dmOwner = (text: string) => slack.dm(config.owner.slack, text);
+  const notify = createNotifyPr({ config, store, slack });
   const reviewChannel = () => slack.channelId(config.reviewChannel);
   const allRequests = (prId: number) => (store.requestsForPr ? store.requestsForPr(prId) : store.openRequests(prId));
 
@@ -66,7 +67,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
 
   async function needsHuman(pr: Pr, reason: string, detail?: string) {
     await store.updatePr(pr.id, { status: 'needs_human', reason });
-    await dmOwner([`${prName(pr)} needs you: ${reason}`, detail].filter(Boolean).join('\n'));
+    await notify(pr, [`${prName(pr)} needs you: ${reason} ${prUrl(pr)}`, detail].filter(Boolean).join('\n'));
   }
 
   async function terminal(pr: Pr, status: 'merged' | 'closed', skipCleanup = false) {
@@ -209,7 +210,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
   async function merge(pr: Pr, run: Run, next: Extract<Next, { action: 'merge' }>): Promise<Outcome> {
     if (!pr.autoMerge || pr.status !== 'active') {
       await store.updatePr(pr.id, { pendingMerge: { sha: next.sha, title: next.title } });
-      await dmOwner(`${prName(pr)} ready to merge @${next.sha.slice(0, 7)} — reply \`merge ${prName(pr)}\``);
+      await notify(pr, `${prName(pr)} ready to merge @${next.sha.slice(0, 7)} — reply \`merge ${prName(pr)}\``);
       return OK;
     }
     await doMerge(pr, next.sha, next.title, `merge_failed:${run.id}`);
@@ -224,7 +225,6 @@ export function createActuator(deps: Deps): ActuatorHandle {
       return false;
     }
     await terminal(pr, 'merged', skipCleanup);
-    await dmOwner(`${prName(pr)} merged @${sha.slice(0, 7)}`);
     return true;
   }
 
@@ -257,7 +257,6 @@ export function createActuator(deps: Deps): ActuatorHandle {
           return OK;
         }
         await terminal(pr, meta.state === 'MERGED' ? 'merged' : 'closed');
-        await dmOwner(`${prName(pr)} ${meta.state.toLowerCase()}; stopped tracking (${next.reason})`);
         return OK;
       }
     }

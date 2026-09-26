@@ -46,6 +46,14 @@ describe('prs', () => {
     expect((await store.getPr(a.pr.id))?.pendingMerge).toBeNull();
   });
 
+  it('claimDmThread: the first claim wins, later ones get the stored thread; lookup by thread', async () => {
+    const { pr } = await store.upsertPr(ref, ['codex-bot'], 4);
+    expect(await store.claimDmThread(pr.id, 'D1', '100.0')).toMatchObject({ dmChannel: 'D1', dmTs: '100.0' });
+    expect(await store.claimDmThread(pr.id, 'D1', '200.0')).toMatchObject({ dmChannel: 'D1', dmTs: '100.0' });
+    expect((await store.getPrByDmThread('D1', '100.0'))?.id).toBe(pr.id);
+    expect(await store.getPrByDmThread('D1', '200.0')).toBeNull();
+  });
+
   it('re-tracking a closed PR reactivates it', async () => {
     const { pr } = await store.upsertPr(ref, ['codex-bot'], 4);
     await store.updatePr(pr.id, { status: 'closed', closedAt: new Date(), runCount: 5 });

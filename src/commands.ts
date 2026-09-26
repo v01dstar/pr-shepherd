@@ -158,7 +158,7 @@ export const helpText = (botName: string) => [
   '• `help` — this list (anyone)',
   'Owner only (also by DM):',
   '• `track <pr>` / `untrack <pr>` — start / stop shepherding',
-  '• `tell <pr> <text>` — pass a note to the agent',
+  "• `tell <pr> <text>` — pass a note to the agent (or reply in the PR's DM thread)",
   '• `set <pr> rounds=N reviewers=A,B auto_merge=on|off` — per-PR policy (any subset; quote names with spaces)',
   '• `merge <pr>` — release a merge waiting for confirmation',
   '• `pause <pr>|all` / `resume <pr>|all` — pause / resume (all = global stop)',

@@ -42,9 +42,11 @@ const slack: SlackPort = {
     return { ts, permalink: `https://slack/${ts}` };
   },
   async react() {},
+  async delete() {},
   async dm(user, text) {
     expect(user).toBe(config.owner.slack);
     dms.push(text);
+    return { channel: 'D-owner', ts: `${9000 + dms.length}.0` };
   },
   async replies() {
     return [];
@@ -330,7 +332,7 @@ describe('merge', () => {
     expect(p.closedAt).toEqual(clock);
     expect(cleaned).toEqual(['shepherd:your-org/example-cli#271']);
     expect(await store.dueTimers(clock)).toEqual([]);
-    expect(dms.at(-1)).toContain('merged');
+    expect(dms).toEqual([]); // the owner hears only when needed (DESIGN §5.6)
   });
 
   it('merge failure → merge_failed event', async () => {
@@ -388,6 +390,9 @@ describe('wait / escalate / done', () => {
     expect((await store.getPr(pr.id))!).toMatchObject({ status: 'needs_human', reason: 'reviewers disagree' });
     expect(dms[0]).toContain('reviewers disagree');
     expect(dms[0]).toContain('violates constraint');
+    expect(dms[0]).toContain('Reply in this thread');
+    // The DM is remembered so a reply in its thread reaches this PR (DESIGN §5.6).
+    expect((await store.getPrByDmThread('D-owner', '9001.0'))!.id).toBe(pr.id);
   });
 
   it('done on a closed PR → closed + cleanup; done on an open PR → escalate', async () => {

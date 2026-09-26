@@ -2,7 +2,7 @@
 import { readdir, rm, stat, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from './config.js';
-import type { Exec, GithubPort, Repos, Scheduler, SlackPort, Store, Workspace } from './contracts.js';
+import type { Exec, GithubPort, Repos, Scheduler, Store, Workspace } from './contracts.js';
 import { defaultExec } from './github.js';
 import { log } from './log.js';
 
@@ -21,7 +21,6 @@ export function createJanitor(deps: {
   github: GithubPort;
   repos: Repos;
   scheduler: Pick<Scheduler, 'isRunning'>;
-  slack: SlackPort;
   dataDir: string;
   now?: () => Date;
   exec?: Exec;
@@ -97,10 +96,6 @@ export function createJanitor(deps: {
         const status = state === 'MERGED' ? 'merged' : 'closed';
         await deps.store.updatePr(pr.id, { status, closedAt: t });
         await deps.store.cancelTimers(pr.id);
-        // The status transition above makes this a one-time DM.
-        await deps.slack
-          .dm(deps.config.owner.slack, `${key} was ${status} outside ${deps.config.bot.name} — stopped tracking and cleaned up its workspace.`)
-          .catch((e: Error) => log.warn({ err: e.message }, 'sweep: DM failed'));
       }
       await deps.repos.cleanup(ws.kind, ref);
       return;

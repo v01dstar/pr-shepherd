@@ -95,7 +95,7 @@ harness: gh pr merge --squash --match-head-commit abc1234 ─▶ merged ─▶ c
 | `approve_done` | One of the approvers replied with a message containing a review link |
 | `reviewer_error` | A reviewer / approver replied with an error message |
 | `reviewer_stalled` | A reviewer / approver did not respond in time (§5.3) |
-| `owner` | The owner replied in any request thread of the PR, or used `tell` |
+| `owner` | The owner replied in any request thread of the PR or in the PR's DM thread (§5.6), or used `tell` |
 | `timer` | A time the agent scheduled with `next: wait` has arrived |
 | `merge_failed` | The harness failed to merge |
 | `continue` | The previous run used up `maxTurns` |
@@ -219,9 +219,9 @@ The schema is defined with zod in `src/output.ts`. `z.toJSONSchema()` produces t
 |---|---|---|
 | `request_review {reviewers, summary, resend}` | Send requests per §5.3; for non-resends, each bot's round +1 | Reviewer is in the PR's reviewer set; the bot has no open, non-timed-out request; rounds do not exceed `max_rounds` |
 | `request_approve {approvers?}` | Ask the configured approvers (all of them, or the named subset) to approve; `{mentions}` templates merge into one message; the first approval wins | Names must be configured approvers; an approver with a live, non-stalled request is skipped; at most 2 requests per approver per head SHA; nothing sendable → rejected with the reason |
-| `merge {sha, title}` | `gh pr merge --squash --delete-branch --match-head-commit <sha>`, body = PR body minus the handoff block | `auto_merge` is on and not paused; when off, wait for the owner's confirmation (DM the owner; `merge <pr>` releases it) |
+| `merge {sha, title}` | `gh pr merge --squash --delete-branch --match-head-commit <sha>`, body = PR body minus the handoff block | `auto_merge` is on and not paused; when off, wait for the owner's confirmation (in the PR's DM thread; `merge <pr>` releases it) |
 | `wait {minutes, reason}` | Timer; delivers `timer` when due | `minutes` ≤ 60 |
-| `escalate {reason}` | DM the owner the reason and the escalated items in `handled`; move to `needs_human` | — |
+| `escalate {reason}` | Tell the owner (PR's DM thread, §5.6) the reason and the escalated items in `handled`; move to `needs_human` | — |
 | `done {reason}` | The PR has been closed or no longer needs management: enter a terminal state | Harness checks state once to confirm it is closed / merged |
 
 - **Record before executing**: the output is first written to `runs.output`; after execution `runs.applied_at` is set. On restart, output that was never applied is applied once; Slack requests are deduplicated by `run_id`.
@@ -241,7 +241,8 @@ The schema is defined with zod in `src/output.ts`. `z.toJSONSchema()` produces t
 | Runs per PR, `maxRunsPerPr` (default 30, including wait, continue, resend) | Move to `needs_human` |
 | Subscription quota | Pause all pools until the reset time, then resume; DM the owner |
 
-- On entering `needs_human`, DM the owner the reason. Ways out: `resume`, `tell`, or a reply in the thread; if the reason was rounds, raising them with `set rounds=` resumes automatically. `resume` resets the run count.
+- **One DM thread per PR, only when needed.** The owner is DMed about a PR only when it needs them: entering `needs_human` (the reason) or a merge waiting for confirmation. The first such DM starts the PR's thread (`prs.dm_channel` / `prs.dm_ts`); later ones reply in it, broadcast so they also show in the DM. The database guarantees one thread: the thread is recorded with a compare-and-set (`… where dm_ts is null`), so when two notices race on a PR that has none, both DM, one wins, and the loser deletes its DM (`chat.delete`) and replies in the winner's thread. Informational notices (merged, a run retried once, closed outside the bot) are not DMed; the daily report covers them.
+- Ways out of `needs_human`: **a reply in the PR's DM thread** (delivered as an `owner` event; the PR goes back to `active` and the harness reacts `:eyes:`; a reply while the PR is active is steered the same way, like `tell`), a reply in a request thread, `tell`, or `resume`; if the reason was rounds, raising them with `set rounds=` resumes automatically. `resume` resets the run count. In a DM thread, text that parses as a command (`merge <pr>`, `status`, `resume <pr>`, …) is still a command.
 - Global emergency stop: `pause all` interrupts all runs and freezes all timers; `resume all` resumes.
 
 ### 5.7 Restart and shutdown
@@ -330,7 +331,8 @@ session: <local session ID, optional>
 
 ### 6.3 Handling comments
 
-- Per thread, pick one of four: **fix** (change code), **reply** (explain, e.g. a misreading, or Suggestion / Information level), **escalate** (design disagreement, unclear requirements, out of scope, violates handoff constraints, two reviewers conflict), **ignore** (pure agreement, outdated).
+- Per thread, pick one of four: **fix** (change code), **reply** (explain, e.g. a misreading, or Suggestion / Information level), **escalate** (design disagreement, unclear requirements, out of scope, violates handoff constraints, two reviewers conflict, or a change needed in another repository), **ignore** (pure agreement, outdated).
+- **Work outside this repository** (an e2e test in a separate test repo, a companion change in another service, docs, infra): the agent pushes only to the PR branch, so it replies on the thread that the change was handed to the owner, leaves it unresolved, and escalates naming the repo and exactly what to add. When the owner answers (§5.6), it checks the linked PR or commit, replies on the thread with the link, resolves it, and continues (re-review for that reviewer if it requested changes). A test in the PR's own repository is a normal fix.
 - Flow: change code, run tests → commit (never amend pushed commits) → `git fetch`; if the remote has moved, rebase onto the remote branch first → push → reply to each thread (fixes link the commit) → resolve fixed threads.
 - Changes are limited to responding to comments and resolving conflicts.
 - Multiple reviews at once: change together, push once; if two reviews point at the same spot, change it once; if two reviews conflict, escalate both; for comments on an old SHA, first confirm the issue still exists.
@@ -418,7 +420,7 @@ curl -fsS --max-time 15 -X POST "$PR_SHEPHERD_URL/prs" \
 | `review` / `approve …` (§7.1) | anyone | G3 |
 | `status [pr]` | anyone | Managed PRs with their `status_line` and rounds; with a pr, also the latest `handled` summary |
 | `track <pr>` / `untrack <pr>` | owner | Register / stop managing and clean up |
-| `tell <pr> <text>` | owner | Steer a message to the agent; replying directly in a request thread has the same effect |
+| `tell <pr> <text>` | owner | Steer a message to the agent; replying directly in a request thread or in the PR's DM thread has the same effect |
 | `set <pr> rounds=6 reviewers=review-bot,codex-bot auto_merge=off` | owner | Change this PR's policy; any subset of fields |
 | `merge <pr>` | owner | Release a merge waiting for the owner's confirmation |
 | `pause` / `resume [<pr>\|all]` | owner | Pause / resume; `all` is the global emergency stop |
@@ -426,7 +428,7 @@ curl -fsS --max-time 15 -X POST "$PR_SHEPHERD_URL/prs" \
 
 ## 10. Data
 
-`migrations/` is authoritative. Below is 001; 002 adds `review_requests.head_sha` (approve requests are counted per head SHA) and `prs.tracked_at` (re-tracking restarts the round count).
+`migrations/` is authoritative. Below is 001; 002 adds `review_requests.head_sha` (approve requests are counted per head SHA) and `prs.tracked_at` (re-tracking restarts the round count); 003 adds `credential_expiry`; 004 adds `prs.dm_channel` / `prs.dm_ts` (the PR's DM thread with the owner, §5.6).
 
 ```sql
 create table prs (

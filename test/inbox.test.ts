@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
-import type { EventKind, InboxEvent, ReviewRequest, SlackMessage, Store, Timer, TimerKind } from '../src/contracts.js';
+import type { EventKind, InboxEvent, Pr, ReviewRequest, SlackMessage, Store, Timer, TimerKind } from '../src/contracts.js';
 import { classifyReply, createInbox } from '../src/inbox.js';
 
 type Case = { bot: string; expect: string; text: string; link?: string };
@@ -37,7 +37,7 @@ const LINK = 'https://github.com/your-org/example-cli/pull/7#pullrequestreview-9
 type NewEvent = { prId: number | null; kind: EventKind; payload?: Record<string, unknown>; dedupeKey?: string };
 type NewTimer = { prId: number; kind: TimerKind; refId?: number | null; fireAt: Date };
 
-function memInbox(reqs: Partial<ReviewRequest>[]) {
+function memInbox(reqs: Partial<ReviewRequest>[], prs: Partial<Pr>[] = []) {
   const requests: ReviewRequest[] = reqs.map((r, i): ReviewRequest => ({
     id: i + 1, prId: 1, runId: 1, kind: 'review', bot: 'review-bot', round: 1, resend: false, channel: 'C', requestTs: '100.0',
     sentAt: NOW, lastActivityAt: null, acked: false, doneAt: null, reviewUrl: null, firstLine: null, superseded: false, headSha: null, ...r,
@@ -46,6 +46,9 @@ function memInbox(reqs: Partial<ReviewRequest>[]) {
   const timers: NewTimer[] = [];
   const cancelled: [number, TimerKind | undefined, number | undefined][] = [];
   const store = {
+    async getPrByDmThread(channel: string, ts: string) {
+      return (prs.find((p) => p.dmChannel === channel && p.dmTs === ts) as Pr | undefined) ?? null;
+    },
     async requestsByThread(channel: string, ts: string) {
       return requests.filter((r) => r.channel === channel && r.requestTs === ts);
     },
@@ -69,8 +72,12 @@ function memInbox(reqs: Partial<ReviewRequest>[]) {
     },
   };
   const pokes: number[] = [];
-  const inbox = createInbox({ config, store: store as unknown as Store, scheduler: { poke: (id) => void pokes.push(id) }, now: () => NOW });
-  return { inbox, requests, events, timers, cancelled, pokes };
+  const acks: string[] = [];
+  const inbox = createInbox({
+    config, store: store as unknown as Store, scheduler: { poke: (id) => void pokes.push(id) }, now: () => NOW,
+    ack: async (m) => void acks.push(m.ts),
+  });
+  return { inbox, requests, events, timers, cancelled, pokes, acks };
 }
 
 const reply = (user: string, text: string, ts = '101.0', threadTs = '100.0'): SlackMessage => ({ channel: 'C', ts, threadTs, user, text });
@@ -82,6 +89,25 @@ describe('createInbox.onThreadReply', () => {
     await t.inbox.onThreadReply(reply('UOWNER', 'skip the Suggestions'));
     expect(t.events).toEqual([{ prId: 1, kind: 'owner', payload: { text: 'skip the Suggestions' }, dedupeKey: 'slack:C:101.0' }]);
     expect(t.pokes).toEqual([1]);
+  });
+
+  it('owner reply in a needs_human DM thread → owner event on that PR, poke and ack', async () => {
+    const t = memInbox([], [{ id: 5, status: 'needs_human', dmChannel: 'D1', dmTs: '300.0' }]);
+    const msg: SlackMessage = { channel: 'D1', ts: '301.0', threadTs: '300.0', user: 'UOWNER', text: 'e2e added in your-org/e2e#12, continue' };
+    await t.inbox.onThreadReply(msg);
+    await t.inbox.onThreadReply(msg);
+    expect(t.events).toEqual([{ prId: 5, kind: 'owner', payload: { text: msg.text }, dedupeKey: 'slack:D1:301.0' }]);
+    expect(t.pokes).toEqual([5]);
+    expect(t.acks).toEqual(['301.0']);
+  });
+
+  it('ignores DM threads that are not an escalation, other authors, and closed PRs', async () => {
+    const t = memInbox([], [{ id: 5, status: 'closed', dmChannel: 'D1', dmTs: '300.0' }, { id: 6, status: 'needs_human', dmChannel: 'D1', dmTs: '400.0' }]);
+    await t.inbox.onThreadReply({ channel: 'D1', ts: '301.0', threadTs: '300.0', user: 'UOWNER', text: 'go' });
+    await t.inbox.onThreadReply({ channel: 'D1', ts: '501.0', threadTs: '500.0', user: 'UOWNER', text: 'go' });
+    await t.inbox.onThreadReply({ channel: 'D1', ts: '401.0', threadTs: '400.0', user: 'USOMEONE', text: 'go' });
+    expect(t.events).toEqual([]);
+    expect(t.acks).toEqual([]);
   });
 
   it('ignores top-level messages, unknown threads and other authors', async () => {

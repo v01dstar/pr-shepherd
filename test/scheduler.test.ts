@@ -61,6 +61,11 @@ function memStore() {
       prs.set(id, pr);
       return pr;
     },
+    async claimDmThread(id: number, dmChannel: string, dmTs: string) {
+      const pr = prs.get(id)!;
+      if (!pr.dmTs) prs.set(id, { ...pr, dmChannel, dmTs });
+      return prs.get(id)!;
+    },
     async addEvent(e: { prId: number | null; kind: EventKind; payload?: Record<string, unknown>; dedupeKey?: string }) {
       if (e.dedupeKey && events.some((x) => x.dedupeKey === e.dedupeKey)) return null;
       const ev: InboxEvent = { id: ++seq, prId: e.prId, kind: e.kind, payload: e.payload ?? {}, dedupeKey: e.dedupeKey ?? null, createdAt: new Date(), runId: null };
@@ -165,7 +170,7 @@ function setup(script: Script, cfg: Config = config) {
       onTimer: vi.fn(),
       policyLine: vi.fn(async (pr: Pr) => `[policy] auto_merge=on runs=${pr.runCount}/30`),
     },
-    slack: { dm: vi.fn(async (_u: string, t: string) => void dms.push(t)) } as never,
+    slack: { dm: vi.fn(async (_u: string, t: string) => (dms.push(t), { channel: 'D-owner', ts: `${dms.length}.0` })) } as never,
     dataDir: '/data',
     runAgent: agent.run,
     appRoot: '/app',
@@ -479,7 +484,7 @@ describe('scheduler — shepherd runs', () => {
     expect(t.sched.paused()).toBe(true);
   });
 
-  it('other errors → status error, DM, one continue; a second error → needs_human', async () => {
+  it('other errors → status error, one continue; a second error → needs_human and a DM', async () => {
     const t = setup(async function* (ctx) {
       yield init();
       await ctx.next();
@@ -492,7 +497,7 @@ describe('scheduler — shepherd runs', () => {
     await waitFor(() => t.store.prs.get(1)!.status === 'needs_human');
     expect(t.store.runs.map((r) => r.status)).toEqual(['error', 'error']);
     expect(t.store.prs.get(1)!.reason).toBe('run_error');
-    expect(t.dms).toHaveLength(2);
+    expect(t.dms).toHaveLength(1); // only the needs_human one; the retry is silent
   });
 
   it('interruptAll: our own interrupt ends as interrupted, not error', async () => {
