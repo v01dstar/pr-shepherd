@@ -9,6 +9,7 @@ import type {
 } from './contracts.js';
 import { checkGhScope } from './github.js';
 import { log } from './log.js';
+import { createNotifyPr } from './notify.js';
 import { GIT_SAFE_ENV } from './repos.js';
 import type { StoreExtras } from './store.js';
 import { reviewJsonSchema, reviewOutputSchema, shepherdJsonSchema, shepherdOutputSchema, type ReviewOutput } from './output.js';
@@ -158,6 +159,9 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
 
   const dmOwner = (text: string) =>
     slack.dm(config.owner.slack, text).catch((err) => log.error({ err }, 'owner DM failed'));
+  // A PR that needs the owner: its DM thread (DESIGN §5.6).
+  const prNotify = createNotifyPr({ config, store, slack });
+  const notify = (pr: Pr, text: string) => prNotify(pr, text).catch((err: unknown) => log.error({ err }, 'owner DM failed'));
 
   function poke(prId: number): void {
     if (stopping || paused() || !accepting) return;
@@ -235,7 +239,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
     const pr = await store.getPr(prId);
     if (!pr || pr.status !== 'active') return;
     await store.updatePr(prId, { status: 'needs_human', reason: 'start_failed' });
-    await dmOwner(`${pr.repo}#${pr.number} needs you: the run failed to start ${n} times (${err instanceof Error ? err.message : String(err)}). ${prUrl(pr)}`);
+    await notify(pr, `${pr.repo}#${pr.number} needs you: the run failed to start ${n} times (${err instanceof Error ? err.message : String(err)}). ${prUrl(pr)}`);
   }
 
   // Returns true when a run was started; the run releases the pool slot itself.
@@ -247,7 +251,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
 
     if (pr.runCount >= config.limits.maxRunsPerPr) {
       await store.updatePr(prId, { status: 'needs_human', reason: 'max_runs' });
-      await dmOwner(`${pr.repo}#${pr.number} needs you: run budget exhausted (${pr.runCount}/${config.limits.maxRunsPerPr}). ${prUrl(pr)}`);
+      await notify(pr, `${pr.repo}#${pr.number} needs you: run budget exhausted (${pr.runCount}/${config.limits.maxRunsPerPr}). ${prUrl(pr)}`);
       return false;
     }
 
@@ -439,7 +443,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
         if (prev?.status === 'bad_output') {
           await store.updateRun(run.id, { ...base, status: 'bad_output' });
           await store.updatePr(pr.id, { status: 'needs_human', reason: 'bad_output' });
-          await dmOwner(`${ref} needs you: the agent returned invalid output twice in a row. ${prUrl(pr)}`);
+          await notify(pr, `${ref} needs you: the agent returned invalid output twice in a row. ${prUrl(pr)}`);
         } else {
           await store.addEvent({ prId: pr.id, kind: 'continue', payload: { rejected: 'invalid output', error: v.error }, dedupeKey });
           await store.updateRun(run.id, { ...base, status: 'bad_output' });
@@ -463,11 +467,10 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
         if (prev?.status === 'error') {
           await store.updateRun(run.id, { ...base, status: 'error' });
           await store.updatePr(pr.id, { status: 'needs_human', reason: 'run_error' });
-          await dmOwner(`${ref} needs you: two runs in a row failed. Last error: ${v.error}. ${prUrl(pr)}`);
+          await notify(pr, `${ref} needs you: two runs in a row failed. Last error: ${v.error}. ${prUrl(pr)}`);
         } else {
           await store.addEvent({ prId: pr.id, kind: 'continue', payload: { reason: 'error' }, dedupeKey });
           await store.updateRun(run.id, { ...base, status: 'error' });
-          await dmOwner(`${ref}: run ${run.id} failed (${v.error}); retrying once. ${prUrl(pr)}`);
         }
     }
   }
@@ -503,7 +506,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
     const pr = run.prId != null ? await store.getPr(run.prId) : null;
     if (!pr || pr.status !== 'active') return;
     await store.updatePr(pr.id, { status: 'needs_human', reason: 'apply_failed' });
-    await dmOwner(`${pr.repo}#${pr.number} needs you: executing the agent's next step failed ${MAX_RETRIES} times (${err instanceof Error ? err.message : String(err)}). ${prUrl(pr)}`);
+    await notify(pr, `${pr.repo}#${pr.number} needs you: executing the agent's next step failed ${MAX_RETRIES} times (${err instanceof Error ? err.message : String(err)}). ${prUrl(pr)}`);
   }
 
   // Subscription limit: freeze both pools until reset, tell me once (DESIGN §5.6).

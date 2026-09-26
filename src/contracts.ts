@@ -16,6 +16,9 @@ export type Pr = PrRef & {
   maxRounds: number;
   autoMerge: boolean;
   pendingMerge: { sha: string; title: string } | null;
+  // The PR's DM thread with the owner (DESIGN §5.6): every DM about the PR goes there; a reply is an `owner` event.
+  dmChannel?: string | null;
+  dmTs?: string | null;
   runCount: number;
   createdAt: Date;
   updatedAt: Date;
@@ -110,6 +113,9 @@ export interface Store {
   upsertPr(ref: PrRef, reviewers: string[], maxRounds: number): Promise<{ pr: Pr; created: boolean }>;
   getPr(id: number): Promise<Pr | null>;
   getPrByRef(ref: PrRef): Promise<Pr | null>;
+  getPrByDmThread(channel: string, ts: string): Promise<Pr | null>;
+  // Records the PR's DM thread only if it has none yet (compare-and-set); returns the PR as stored afterwards.
+  claimDmThread(prId: number, channel: string, ts: string): Promise<Pr>;
   listPrs(statuses?: PrStatus[]): Promise<Pr[]>;
   updatePr(id: number, patch: Partial<Omit<Pr, 'id' | 'repo' | 'number' | 'createdAt'>>): Promise<Pr>;
 
@@ -158,16 +164,18 @@ export interface Store {
 export type SlackMessage = { channel: string; ts: string; threadTs?: string; user?: string; botId?: string; text: string };
 
 export interface SlackPort {
-  post(channel: string, text: string, threadTs?: string): Promise<{ ts: string; permalink: string }>;
+  // broadcast: a thread reply also shown in the conversation ("Also send to …").
+  post(channel: string, text: string, threadTs?: string, opts?: { broadcast?: boolean }): Promise<{ ts: string; permalink: string }>;
   react(channel: string, ts: string, emoji: string): Promise<void>;
-  dm(userId: string, text: string): Promise<void>;
+  dm(userId: string, text: string): Promise<{ channel: string; ts: string }>;
+  delete(channel: string, ts: string): Promise<void>; // one of our own messages
   replies(channel: string, threadTs: string): Promise<SlackMessage[]>; // for restart backfill
   channelId(name: string): Promise<string>;
 }
 
 // What slack.ts calls back into; implemented by inbox/g3 and wired in index.ts.
 export interface SlackHandlers {
-  onThreadReply(msg: SlackMessage): Promise<void>; // any reply inside a thread in reviewChannel
+  onThreadReply(msg: SlackMessage): Promise<void>; // any reply inside a thread in reviewChannel or a DM thread
   onCommand(cmd: Command, msg: SlackMessage): Promise<void>; // parsed @bot mention or owner DM
 }
 

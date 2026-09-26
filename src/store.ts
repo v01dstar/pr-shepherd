@@ -31,6 +31,8 @@ const toPr = (r: Row): Pr => ({
   maxRounds: num(r.max_rounds),
   autoMerge: Boolean(r.auto_merge),
   pendingMerge: r.pending_merge == null ? null : json<{ sha: string; title: string }>(r.pending_merge),
+  dmChannel: (r.dm_channel as string | null) ?? null,
+  dmTs: (r.dm_ts as string | null) ?? null,
   runCount: num(r.run_count),
   createdAt: date(r.created_at),
   updatedAt: date(r.updated_at),
@@ -173,6 +175,21 @@ export function createStore(db: Db): Store & StoreExtras {
     },
 
     getPrByRef,
+
+    async claimDmThread(prId, channel, ts) {
+      const won = await one(
+        'update prs set dm_channel = $2, dm_ts = $3, updated_at = now() where id = $1 and dm_ts is null returning *',
+        [prId, channel, ts],
+      );
+      const r = won ?? (await one('select * from prs where id = $1', [prId]));
+      if (!r) throw new Error(`pr ${prId} not found`);
+      return toPr(r);
+    },
+
+    async getPrByDmThread(channel, ts) {
+      const r = await one('select * from prs where dm_channel = $1 and dm_ts = $2 order by id desc limit 1', [channel, ts]);
+      return r ? toPr(r) : null;
+    },
 
     async listPrs(statuses) {
       const rows = statuses

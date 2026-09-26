@@ -137,6 +137,14 @@ describe('routeEvent', () => {
       cmd: { kind: 'unknown', text: 'hello' },
     });
   });
+
+  it('free text in a DM thread → thread reply (answers a needs_human DM); commands there stay commands', () => {
+    const dm = { type: 'message', channel: 'D0OWNER', channel_type: 'im', thread_ts: '5.0', user: 'UOWNER' };
+    expect(routeEvent({ ...dm, ts: '9.0', text: 'e2e added, continue' }, ctx)).toEqual([
+      { kind: 'thread_reply', msg: { channel: 'D0OWNER', ts: '9.0', threadTs: '5.0', user: 'UOWNER', text: 'e2e added, continue' } },
+    ]);
+    expect(routeEvent({ ...dm, ts: '10.0', text: 'status' }, ctx).map((r) => r.kind)).toEqual(['command']);
+  });
 });
 
 function fakeApi(over: Partial<{ [K in keyof SlackApi]: Partial<SlackApi[K]> }> = {}) {
@@ -144,6 +152,7 @@ function fakeApi(over: Partial<{ [K in keyof SlackApi]: Partial<SlackApi[K]> }> 
     chat: {
       postMessage: vi.fn(async (a: { channel: string }) => ({ ok: true, ts: '9.0', channel: a.channel })),
       getPermalink: vi.fn(async (a: { channel: string; message_ts: string }) => ({ ok: true, permalink: `https://x.slack.com/archives/${a.channel}/p${a.message_ts}` })),
+      delete: vi.fn(async () => ({ ok: true })),
       ...over.chat,
     },
     reactions: { add: vi.fn(async () => ({ ok: true })), ...over.reactions },
@@ -187,6 +196,11 @@ describe('createSlackPort', () => {
     await createSlackPort(api as unknown as SlackApi).dm('UOWNER', 'report');
     expect(api.conversations.open).toHaveBeenCalledWith({ users: 'UOWNER' });
     expect(api.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: 'D0DM', text: 'report' }));
+    expect(await createSlackPort(api as unknown as SlackApi).dm('UOWNER', 'x')).toMatchObject({ channel: 'D0DM' });
+    await createSlackPort(api as unknown as SlackApi).post('D0DM', 'y', '5.0', { broadcast: true });
+    expect(api.chat.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ thread_ts: '5.0', reply_broadcast: true }));
+    await createSlackPort(api as unknown as SlackApi).delete('D0DM', '7.0');
+    expect(api.chat.delete).toHaveBeenCalledWith({ channel: 'D0DM', ts: '7.0' });
   });
 
   it('replies paginates and excludes the parent', async () => {

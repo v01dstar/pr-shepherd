@@ -28,6 +28,8 @@ type InboxDeps = {
   ownerSlackId?: string;
   // An owner reply also takes the PR out of needs_human (DESIGN §5.6); index.ts passes that; default is poke.
   wakeByOwner?: (prId: number) => Promise<void>;
+  // Acknowledges an owner reply in a PR's DM thread (index.ts: :eyes: reaction).
+  ack?: (msg: SlackMessage) => Promise<void>;
 };
 
 export function createInbox(deps: InboxDeps): { onThreadReply(msg: SlackMessage): Promise<void> } {
@@ -42,9 +44,18 @@ export function createInbox(deps: InboxDeps): { onThreadReply(msg: SlackMessage)
 
   async function onThreadReply(msg: SlackMessage): Promise<void> {
     if (!msg.threadTs || msg.threadTs === msg.ts) return;
-    const requests = await store.requestsByThread(msg.channel, msg.threadTs);
-    if (!requests.length) return;
     const dedupeKey = `slack:${msg.channel}:${msg.ts}`;
+    const requests = await store.requestsByThread(msg.channel, msg.threadTs);
+    if (!requests.length) {
+      // The owner writing in a PR's DM thread (DESIGN §5.6).
+      const pr = msg.user === owner ? await store.getPrByDmThread(msg.channel, msg.threadTs) : null;
+      if (!pr || pr.status === 'merged' || pr.status === 'closed') return;
+      const e = await store.addEvent({ prId: pr.id, kind: 'owner', payload: { text: msg.text }, dedupeKey });
+      if (!e) return;
+      await (deps.wakeByOwner ? deps.wakeByOwner(pr.id) : Promise.resolve(scheduler.poke(pr.id)));
+      await deps.ack?.(msg).catch((err: unknown) => log.warn({ err }, 'ack failed'));
+      return;
+    }
 
     if (msg.user === owner) {
       // A thread belongs to one PR, even when {mentions} merged several bots into it.

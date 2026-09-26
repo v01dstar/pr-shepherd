@@ -70,8 +70,10 @@ async function main() {
   const g3 = createG3({ config, store, slack, github, repos, scheduler });
   control = createControl({ config, store, github, repos, slack, scheduler, actuator, g3 });
   const ctl = control;
-  inbox = createInbox({ config, store, scheduler, wakeByOwner: (prId) => ctl.wake(prId) });
-  const janitor = createJanitor({ config, store, github, repos, scheduler, slack, dataDir });
+  inbox = createInbox({
+    config, store, scheduler, wakeByOwner: (prId) => ctl.wake(prId), ack: (msg) => slack.react(msg.channel, msg.ts, 'eyes'),
+  });
+  const janitor = createJanitor({ config, store, github, repos, scheduler, dataDir });
 
   let credentials: CredentialStatus | undefined;
   const recheck = async () => {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
-import type { Exec, GithubPort, Job, Pr, PrRef, Repos, SlackPort, Store, Workspace, WorkspaceKind } from '../src/contracts.js';
+import type { Exec, GithubPort, Job, Pr, PrRef, Repos, Store, Workspace, WorkspaceKind } from '../src/contracts.js';
 import { createJanitor } from '../src/janitor.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -55,20 +55,17 @@ function setup(opts: { ws?: Workspace[]; prs?: Pr[]; jobs?: Partial<Job>[]; stat
       if (w) w.cleanedAt = new Date();
     }),
   };
-  const dms: string[] = [];
-  const slack = { dm: vi.fn(async (_u: string, text: string) => void dms.push(text)) };
   const janitor = createJanitor({
     config,
     store: store as unknown as Store,
     github: github as unknown as GithubPort,
     repos,
     scheduler: { isRunning: (id) => (opts.running ?? []).includes(id) },
-    slack: slack as unknown as SlackPort,
     dataDir: opts.dataDir ?? '/nonexistent',
     now: () => opts.now ?? WED,
     exec: opts.exec,
   });
-  return { janitor, store, github, repos, slack, cleaned, dms, prs, cancelled };
+  return { janitor, store, github, repos, cleaned, prs, cancelled };
 }
 
 describe('sweep', () => {
@@ -76,7 +73,7 @@ describe('sweep', () => {
   const b = { repo: 'o/b', number: 2 };
   const c = { repo: 'o/c', number: 3 };
 
-  it('merged-outside shepherd PR → terminal status, timers cancelled, one DM, cleanup', async () => {
+  it('merged-outside shepherd PR → terminal status, timers cancelled, cleanup', async () => {
     const t = setup({
       ws: [mkWs(1, 'shepherd', a)],
       prs: [mkPr(10, a)],
@@ -85,13 +82,11 @@ describe('sweep', () => {
     await t.janitor.sweep();
     expect(t.prs[0]).toMatchObject({ status: 'merged', closedAt: WED });
     expect(t.cancelled).toEqual([10]);
-    expect(t.dms).toEqual(['o/a#1 was merged outside test-bot — stopped tracking and cleaned up its workspace.']);
-    expect(t.slack.dm).toHaveBeenCalledWith('UOWNER', expect.any(String));
     expect(t.cleaned).toEqual(['shepherd:o/a#1']);
     expect(t.github.prStates).toHaveBeenCalledWith([a]);
   });
 
-  it('PR already merged by the bot → cleanup only, no DM; closed → closed', async () => {
+  it('PR already merged by the bot → cleanup only; closed → closed', async () => {
     const t = setup({
       ws: [mkWs(1, 'shepherd', a), mkWs(2, 'shepherd', b)],
       prs: [mkPr(10, a, { status: 'merged', closedAt: WED }), mkPr(11, b)],
@@ -99,7 +94,6 @@ describe('sweep', () => {
     });
     await t.janitor.sweep();
     expect(t.cleaned).toEqual(['shepherd:o/a#1', 'shepherd:o/b#2']);
-    expect(t.dms).toEqual(['o/b#2 was closed outside test-bot — stopped tracking and cleaned up its workspace.']);
     expect(t.prs[1]!.status).toBe('closed');
     expect(t.store.updatePr).toHaveBeenCalledTimes(1);
   });
@@ -131,7 +125,6 @@ describe('sweep', () => {
     });
     await t.janitor.sweep();
     expect(t.cleaned).toEqual(['review:o/a#1', 'review:o/c#3']);
-    expect(t.dms).toEqual([]);
   });
 
   it('GitHub failure skips the whole round', async () => {
@@ -154,7 +147,6 @@ describe('sweep', () => {
     const t = setup({ ws: [mkWs(1, 'shepherd', a)], prs: [mkPr(10, a, { status: 'closed' })], states: new Map([['o/a#1', 'OPEN']]) });
     await t.janitor.sweep();
     expect(t.cleaned).toEqual(['shepherd:o/a#1']);
-    expect(t.dms).toEqual([]);
   });
 
   it('a failing cleanup does not stop the others', async () => {

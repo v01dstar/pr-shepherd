@@ -63,6 +63,8 @@ export function routeEvent(ev: RawEvent, ctx: RouteCtx): Route[] {
   // Channel messages mentioning us are commands too: Slack may not send app_mention for bot authors.
   if (ev.type === 'app_mention' || isDm || (ev.type === 'message' && mentioned)) {
     const cmd = parseCommand(msg.text, ctx.botUserId);
+    // Free text in a DM thread is for that PR's agent (DESIGN §5.6); real commands stay commands.
+    if (isDm && msg.threadTs && cmd.kind === 'unknown') return [{ kind: 'thread_reply', msg }];
     // Reviewer bots often @ the requester in their thread replies; that is a reply, not a command.
     if (!(inReviewThread && cmd.kind === 'unknown')) routes.push({ kind: 'command', cmd, msg });
   }
@@ -75,8 +77,9 @@ type ApiResult = { ok?: boolean; [k: string]: unknown };
 // The Web API methods we use; Bolt's app.client satisfies it, tests pass a fake.
 export type SlackApi = {
   chat: {
-    postMessage(a: { channel: string; text: string; thread_ts?: string; unfurl_links?: boolean; unfurl_media?: boolean }): Promise<ApiResult & { ts?: string; channel?: string }>;
+    postMessage(a: { channel: string; text: string; thread_ts?: string; reply_broadcast?: boolean; unfurl_links?: boolean; unfurl_media?: boolean }): Promise<ApiResult & { ts?: string; channel?: string }>;
     getPermalink(a: { channel: string; message_ts: string }): Promise<ApiResult & { permalink?: string }>;
+    delete(a: { channel: string; ts: string }): Promise<ApiResult>;
   };
   reactions: { add(a: { channel: string; timestamp: string; name: string }): Promise<ApiResult> };
   conversations: {
@@ -95,8 +98,9 @@ export function createSlackPort(api: SlackApi): SlackPort & { botUserIdOf(botId:
   const channels = new Map<string, string>();
   const botUsers = new Map<string, string | undefined>();
 
-  async function post(channel: string, text: string, threadTs?: string) {
-    const r = await api.chat.postMessage({ channel, text, thread_ts: threadTs, unfurl_links: false, unfurl_media: false });
+  async function post(channel: string, text: string, threadTs?: string, opts: { broadcast?: boolean } = {}) {
+    const broadcast = threadTs && opts.broadcast ? { reply_broadcast: true } : {};
+    const r = await api.chat.postMessage({ channel, text, thread_ts: threadTs, ...broadcast, unfurl_links: false, unfurl_media: false });
     if (!r.ts) throw new Error(`chat.postMessage returned no ts (channel ${channel})`);
     const link = await api.chat.getPermalink({ channel: r.channel ?? channel, message_ts: r.ts });
     return { ts: r.ts, permalink: link.permalink ?? '' };
@@ -117,7 +121,12 @@ export function createSlackPort(api: SlackApi): SlackPort & { botUserIdOf(botId:
       const r = await api.conversations.open({ users: userId });
       const id = r.channel?.id;
       if (!id) throw new Error(`conversations.open returned no channel for ${userId}`);
-      await post(id, text);
+      const { ts } = await post(id, text);
+      return { channel: id, ts };
+    },
+
+    async delete(channel, ts) {
+      await api.chat.delete({ channel, ts });
     },
 
     async replies(channel, threadTs) {

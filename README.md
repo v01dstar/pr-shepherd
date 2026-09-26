@@ -252,14 +252,16 @@ Slack commands (`<pr>` = a PR URL or `owner/repo#N`; owner-only commands also wo
 | `review <pr>` · `approve <pr>` (also `review this`, `please review:`, `please approve <pr> - …`) | anyone | review / approve someone else's PR |
 | `status [pr]` | anyone | shepherded PRs and what each is waiting on |
 | `track <pr>` · `untrack <pr>` | owner | start / stop shepherding (untrack cleans up the workspace) |
-| `tell <pr> <text>` | owner | say something to the PR's agent (replying in a request thread works too) |
+| `tell <pr> <text>` | owner | say something to the PR's agent (replying in a request thread, or in the PR's DM thread, works too) |
 | `set <pr> rounds=6 reviewers=A,B auto_merge=off` | owner | per-PR policy |
 | `merge <pr>` | owner | release a merge that is waiting for confirmation (`auto_merge=off`) |
 | `pause` · `resume` `<pr>\|all` | owner | pause one PR, or everything (emergency stop) |
 | `report` · `help` | owner · anyone | daily report now / command list |
 
-Every command is `@pr-shepherd <command>`, using your bot's Slack name. The owner gets a DM whenever a PR
-needs them (escalation, budget exhausted, credential failure) and a short daily report.
+Every command is `@pr-shepherd <command>`, using your bot's Slack name. The owner gets a DM only when a PR
+needs them (escalation, budget exhausted, a merge to confirm), in one thread per PR — reply in that thread
+(e.g. "added the e2e test, continue") and the PR's agent picks it up. Credential failures and a short daily
+report arrive as plain DMs.
 
 ## Operations on InstaCloud
 
