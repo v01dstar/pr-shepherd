@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploy pr-shepherd to InstaCloud from this checkout with the template (DESIGN §11.1).
+# Deploy pr-shepherd to InstaCloud from this checkout (DESIGN §11.1): the template on a first deploy, and an
+# in-place update of the existing services (same database and /data volume) on every redeploy.
 # Credentials come from deploy.env, the bot config from config.yaml (the pr-shepherd-setup skill writes it).
 # Values are passed from variables, so they never land in your shell history.
 # Usage: scripts/deploy.sh [--project <name>] [--branch <name>] [--region <slug>] [--env-file <file>] [--config <file>]
@@ -72,7 +73,9 @@ if command -v gh >/dev/null; then
 fi
 
 # Template deploys only run prebuilt images, and they pull anonymously. Without a public image for this
-# version, the services are created directly and the bot is built from this checkout (see below).
+# version, the services are created directly and the bot is built from this checkout (see below). A template
+# deploy also only creates: into a project that already has the services it adds a second set (db-2,
+# pr-shepherd-2, a second bot on the same Slack app), so a redeploy always takes the direct path.
 IMAGE=$(node -e "
   const t = require('yaml').parse(require('fs').readFileSync('insta.template.yaml', 'utf8'));
   console.log(t.services['pr-shepherd'].image);
@@ -105,21 +108,26 @@ if [[ ${#BRANCH[@]} -gt 0 ]] && ! insta branch list --json | grep -q "\"${BRANCH
   insta branch create "${BRANCH[1]}"
 fi
 
+B=(${BRANCH[@]+"${BRANCH[@]}"})
+EXISTING=""
+insta service list ${B[@]+"${B[@]}"} --json | grep -q '"name": *"pr-shepherd"' && EXISTING=1
+
 ARGS=(--set GH_TOKEN="$GH_TOKEN" --set SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" --set SLACK_APP_TOKEN="$SLACK_APP_TOKEN"
       --set PR_SHEPHERD_CONFIG="$CONFIG_JSON")
 if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then ARGS+=(--set CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN")
 else ARGS+=(--set ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"); fi
 
-if [[ -z "$FROM_SOURCE" ]]; then
+if [[ -z "$FROM_SOURCE" && -z "$EXISTING" ]]; then
   echo "==> deploying $BOT_NAME (template ./insta.template.yaml)"
   insta template deploy ./ "${ARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"} -y
 else
-  # Same services as the template (db, pr-shepherd with a /data volume), created directly: a source deploy
-  # into a template-created service whose image failed is refused (409, service already exists).
+  # Same services as the template (db, pr-shepherd with a /data volume), created directly when missing: a
+  # source deploy into a template-created service whose image failed is refused (409, service already
+  # exists). A redeploy updates the existing ones in place, keeping the database and /data.
   # DATA_DIR and CLAUDE_CONFIG_DIR default to what the template sets. Values go in on stdin, never argv.
   SVC=compute/pr-shepherd
-  B=(${BRANCH[@]+"${BRANCH[@]}"})
-  echo "==> creating services for $BOT_NAME (building from this checkout)"
+  if [[ -n "$EXISTING" ]]; then echo "==> updating $BOT_NAME in place"
+  else echo "==> creating services for $BOT_NAME (building from this checkout)"; fi
   services=$(insta service list ${B[@]+"${B[@]}"} --json)
   grep -q '"db"' <<<"$services" || insta service add postgres db ${B[@]+"${B[@]}"} ${REGION[@]+"${REGION[@]}"}
   grep -q '"pr-shepherd"' <<<"$services" \
@@ -132,8 +140,13 @@ else
     printf '%s' "${!v}" | insta secrets set "$v" --service "$SVC" ${B[@]+"${B[@]}"} >/dev/null
     echo "  set $v"
   done
-  echo "==> building and deploying $BOT_NAME from this checkout"
-  insta deploy . --group pr-shepherd --port 8080 ${B[@]+"${B[@]}"}
+  if [[ -n "$FROM_SOURCE" ]]; then
+    echo "==> building and deploying $BOT_NAME from this checkout"
+    insta deploy . --group pr-shepherd --port 8080 ${B[@]+"${B[@]}"}
+  else
+    echo "==> deploying $IMAGE"
+    insta deploy --image "$IMAGE" --group pr-shepherd --port 8080 ${B[@]+"${B[@]}"}
+  fi
 fi
 
 ORG=$(node -e 'console.log(JSON.parse(process.argv[1]).org)' "$CONFIG_JSON")
