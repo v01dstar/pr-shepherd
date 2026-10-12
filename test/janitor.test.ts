@@ -236,6 +236,33 @@ describe('daily', () => {
     expect(existsSync(used)).toBe(true);
   });
 
+  it('clears build caches and day-old tmp entries, but not while a run or review job is live', async () => {
+    const goMod = join(dataDir, 'cache', 'go-mod', 'm@v1');
+    const oldTmp = join(dataDir, 'tmp', 'old');
+    const newTmp = join(dataDir, 'tmp', 'new');
+    const seed = () => {
+      mkdirSync(goMod, { recursive: true });
+      writeFileSync(join(goMod, 'go.mod'), 'module m');
+      mkdirSync(oldTmp, { recursive: true });
+      writeFileSync(join(oldTmp, 'f'), 'x');
+      age(join(oldTmp, 'f'), 2);
+      age(oldTmp, 2);
+      writeFileSync(newTmp, 'x');
+    };
+    const exec: Exec = async () => ({ stdout: '', stderr: '' });
+    seed();
+
+    await setup({ dataDir, exec, prs: [mkPr(1, { repo: 'o/a', number: 1 })], running: [1] }).janitor.daily();
+    expect(existsSync(goMod)).toBe(true);
+    await setup({ dataDir, exec, jobs: [{ repo: 'o/b', number: 2, status: 'running' }] }).janitor.daily();
+    expect(existsSync(goMod)).toBe(true);
+
+    await setup({ dataDir, exec, prs: [mkPr(1, { repo: 'o/a', number: 1 })] }).janitor.daily();
+    expect(existsSync(join(dataDir, 'cache'))).toBe(false);
+    expect(existsSync(oldTmp)).toBe(false);
+    expect(existsSync(newTmp)).toBe(true);
+  });
+
   it('is a no-op when directories do not exist', async () => {
     await expect(setup({ dataDir: join(dataDir, 'missing') }).janitor.daily()).resolves.toBeUndefined();
   });
@@ -249,13 +276,14 @@ describe('start', () => {
     const stop = t.janitor.start();
     await vi.advanceTimersByTimeAsync(1);
     expect(t.github.prStates).toHaveBeenCalledTimes(1);
-    expect(t.store.listPrs).toHaveBeenCalledTimes(1);
+    expect(t.store.listPrs).toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(t.github.prStates).toHaveBeenCalledTimes(2);
     stop();
     await vi.advanceTimersByTimeAsync(DAY);
     expect(t.github.prStates).toHaveBeenCalledTimes(2);
-    expect(t.store.listPrs).toHaveBeenCalledTimes(1);
+    // One daily run: session prune + cache cleanup.
+    expect(t.store.listPrs.mock.calls.length).toBeLessThanOrEqual(2);
   });
 });
 

@@ -9,6 +9,7 @@ import { log } from './log.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSION_RETENTION_DAYS = 30;
 const MIRROR_IDLE_DAYS = 30;
+const TMP_RETENTION_MS = DAY_MS;
 // Written into a bare mirror when it first has no live workspace; git ignores unknown files in the git dir.
 const IDLE_MARKER = 'pr-shepherd-idle-since';
 // Read (and cleared) for mirrors marked before the rename.
@@ -116,6 +117,7 @@ export function createJanitor(deps: {
     try {
       await pruneSessions().catch((e: Error) => log.warn({ err: e.message }, 'janitor: session prune failed'));
       await maintainMirrors().catch((e: Error) => log.warn({ err: e.message }, 'janitor: mirror maintenance failed'));
+      await clearBuildCaches().catch((e: Error) => log.warn({ err: e.message }, 'janitor: cache cleanup failed'));
     } finally {
       dailyRunning = false;
     }
@@ -183,6 +185,29 @@ export function createJanitor(deps: {
           );
         }
       }
+    }
+  }
+
+  // Target-repo builds put their Go/npm caches under cache/ and temp files under tmp/ (Dockerfile ENV). They
+  // only grow, so empty them daily, but never under a running build: skipped while any run or review job is live.
+  async function clearBuildCaches() {
+    const prs = await deps.store.listPrs(['active', 'needs_human', 'paused']);
+    if (prs.some((p) => deps.scheduler.isRunning(p.id)) || (await activeJobRefs(now())).size) {
+      log.info('janitor: cache cleanup skipped; a run is in progress');
+      return;
+    }
+    const cache = join(deps.dataDir, 'cache');
+    if ((await readdir(cache).catch(() => [])).length) {
+      // Go's module cache is read-only on purpose; rm can't delete from a read-only dir.
+      await exec('chmod', ['-R', 'u+w', cache]).catch(() => undefined);
+      await rm(cache, { recursive: true, force: true });
+      log.info('janitor: cleared build caches');
+    }
+    const tmp = join(deps.dataDir, 'tmp');
+    const cutoff = now().getTime() - TMP_RETENTION_MS;
+    for (const name of await readdir(tmp).catch(() => [])) {
+      const p = join(tmp, name);
+      if ((await newestMtime(p).catch(() => Infinity)) < cutoff) await rm(p, { recursive: true, force: true });
     }
   }
 
