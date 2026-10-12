@@ -23,6 +23,7 @@ const output = (status_line: string, actions: Parameters<typeof item>[0][] = [])
   handled: actions.length ? [{ reviewer: 'codex-bot', review_url: 'r', items: actions.map(item) }] : [],
   rebase: null,
   status_line,
+  owner_update: null,
   next: { action: 'wait', minutes: 5, reason: 'x' },
 });
 

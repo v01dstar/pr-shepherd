@@ -215,7 +215,7 @@ export function createControl(deps: ControlDeps) {
           scheduler.poke(pr.id); // a merge_failed event may be waiting
           return reply(msg, `:x: ${name(pr)}: ${r.error}`);
         }
-        return reply(msg, `merged ${name(pr)}`);
+        return reply(msg, r.queued ? `queued ${name(pr)} in the merge queue` : `merged ${name(pr)}`);
       }
       case 'pause':
       case 'resume':

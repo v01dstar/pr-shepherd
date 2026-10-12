@@ -22,7 +22,7 @@ const config: Config = {
 const goodOutput = {
   handled: [],
   rebase: null,
-  status_line: 'waiting for review-bot',
+  status_line: 'waiting for review-bot', owner_update: null,
   next: { action: 'wait', minutes: 10, reason: 'CI' },
 };
 
@@ -170,7 +170,10 @@ function setup(script: Script, cfg: Config = config) {
       onTimer: vi.fn(),
       policyLine: vi.fn(async (pr: Pr) => `[policy] auto_merge=on runs=${pr.runCount}/30`),
     },
-    slack: { dm: vi.fn(async (_u: string, t: string) => (dms.push(t), { channel: 'D-owner', ts: `${dms.length}.0` })) } as never,
+    slack: {
+      dm: vi.fn(async (_u: string, t: string) => (dms.push(t), { channel: 'D-owner', ts: `${dms.length}.0` })),
+      post: vi.fn(async (_c: string, t: string) => (dms.push(t), { ts: `${dms.length}.0`, permalink: '' })), // thread replies
+    } as never,
     dataDir: '/data',
     runAgent: agent.run,
     appRoot: '/app',
@@ -498,6 +501,42 @@ describe('scheduler — shepherd runs', () => {
     expect(t.store.runs.map((r) => r.status)).toEqual(['error', 'error']);
     expect(t.store.prs.get(1)!.reason).toBe('run_error');
     expect(t.dms).toHaveLength(1); // only the needs_human one; the retry is silent
+  });
+
+  it('owner_update: kept only for a run that read an owner event, falling back to the status line', async () => {
+    const t = setup(chatty({ ...goodOutput, owner_update: 'unasked' }));
+    current = t.sched;
+    t.store.addPr({ id: 1 });
+    await t.store.addEvent({ prId: 1, kind: 'registered' });
+    t.sched.poke(1);
+    await waitFor(() => t.applied.length === 1);
+    expect((t.applied[0]!.output as { owner_update: unknown }).owner_update).toBeNull();
+    await waitFor(() => !t.sched.isRunning(1));
+
+    const u = setup(chatty());
+    current = u.sched;
+    u.store.addPr({ id: 1 });
+    await u.store.addEvent({ prId: 1, kind: 'owner', payload: { text: 'done, continue' } });
+    u.sched.poke(1);
+    await waitFor(() => u.applied.length === 1);
+    expect((u.applied[0]!.output as { owner_update: unknown }).owner_update).toBe('waiting for review-bot');
+    await waitFor(() => !u.sched.isRunning(1));
+  });
+
+  it('a run after the owner replied that errors says so in the thread before retrying', async () => {
+    const t = setup(async function* (ctx) {
+      yield init();
+      await ctx.next();
+      throw new Error('boom');
+    });
+    current = t.sched;
+    t.store.addPr({ id: 1 });
+    await t.store.addEvent({ prId: 1, kind: 'owner', payload: { text: 'push' } });
+    t.sched.poke(1);
+    await waitFor(() => t.store.prs.get(1)!.status === 'needs_human');
+    expect(t.dms[0]).toMatch(/^:warning: the run after your reply failed \(.*boom.*\); retrying once/);
+    expect(t.dms[0]).not.toContain('Reply in this thread');
+    expect(t.dms).toHaveLength(2); // the warning, then needs_human (the retry read no owner event)
   });
 
   it('interruptAll: our own interrupt ends as interrupted, not error', async () => {

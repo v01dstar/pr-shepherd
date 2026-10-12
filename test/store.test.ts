@@ -107,7 +107,7 @@ describe('review-fix extras', () => {
     await store.unclaimEvents([e!.id], r1.id);
     expect((await store.pendingEvents(pr.id)).map((x) => x.id)).toEqual([e!.id]);
 
-    await store.updateRun(r1.id, { status: 'ok', output: { handled: [], rebase: null, status_line: 'waiting', next: { action: 'wait', minutes: 5, reason: 'ci' } } });
+    await store.updateRun(r1.id, { status: 'ok', output: { handled: [], rebase: null, status_line: 'waiting', owner_update: null, next: { action: 'wait', minutes: 5, reason: 'ci' } } });
     const r2 = await store.createRun({ prId: pr.id });
     await store.updateRun(r2.id, { status: 'interrupted' });
     expect((await store.lastRun(pr.id))!.id).toBe(r2.id);
@@ -120,7 +120,7 @@ describe('runs', () => {
     const { pr } = await store.upsertPr(ref, ['codex-bot'], 4);
     const r = await store.createRun({ prId: pr.id, sessionId: 's1' });
     expect(r).toMatchObject({ prId: pr.id, jobId: null, sessionId: 's1', status: 'running', output: null, appliedAt: null });
-    const output = { handled: [], rebase: null, status_line: 'x', next: { action: 'escalate' as const, reason: 'r' } };
+    const output = { handled: [], rebase: null, status_line: 'x', owner_update: null, next: { action: 'escalate' as const, reason: 'r' } };
     const u = await store.updateRun(r.id, { status: 'ok', output, usage: { in: 1 }, turns: 3, endedAt: new Date() });
     expect(u).toMatchObject({ status: 'ok', output, usage: { in: 1 }, turns: 3 });
     expect((await store.unappliedRuns()).map((x) => x.id)).toEqual([r.id]);
