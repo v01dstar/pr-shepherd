@@ -28,6 +28,13 @@ ENV PATH=/usr/local/go/bin:$PATH \
     DATA_DIR=/data \
     CLAUDE_CONFIG_DIR=/data/claude \
     NODE_ENV=production
+# The root disk is small and fixed (only the /data volume can be sized), so build caches and temp files
+# from target-repo builds go on the volume.
+ENV XDG_CACHE_HOME=/data/cache \
+    GOCACHE=/data/cache/go-build \
+    GOMODCACHE=/data/cache/go-mod \
+    npm_config_cache=/data/cache/npm \
+    TMPDIR=/data/tmp
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

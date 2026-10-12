@@ -3,7 +3,7 @@
 # mounted root-owned (and earlier root-run versions left files there), so fix ownership first, then drop.
 set -e
 if [ "$(id -u)" = "0" ]; then
-  mkdir -p "${DATA_DIR:-/data}"
+  mkdir -p "${DATA_DIR:-/data}" "${TMPDIR:-/tmp}" "${XDG_CACHE_HOME:-/data/cache}"
   find "${DATA_DIR:-/data}" \! -user node -exec chown -h node:node {} +
   exec setpriv --reuid=node --regid=node --init-groups env HOME=/home/node "$@"
 fi
