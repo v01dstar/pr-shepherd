@@ -254,7 +254,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
           `Wait until it merges and GitHub retargets this PR, then rebase onto the new base and merge.`,
       );
     }
-    const res = await github.merge(pr, sha, `${title} (#${pr.number})`, stripHandoff(meta.body), meta.headRef);
+    const res = await github.merge(pr, sha, `${title} (#${pr.number})`, stripHandoff(meta.body), { head: meta.headRef, base: meta.baseRef });
     if (!res.ok) return failed(res.error);
     if (res.queued) {
       await store.updatePr(pr.id, { pendingMerge: null });

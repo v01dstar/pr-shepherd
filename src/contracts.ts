@@ -218,8 +218,9 @@ export interface GithubPort {
   verifyOwnerToken(token: string): Promise<boolean>; // GET /user with that token == config.owner.github; cached by hash 1h
   prMeta(ref: PrRef): Promise<PrMeta>;
   prStates(refs: PrRef[]): Promise<Map<string, PrMeta['state']>>; // key `${repo}#${number}`; batched GraphQL
-  // Async merge API (works for stacked PRs too), squash, locked to `sha`; deletes headRef once merged.
-  merge(ref: PrRef, sha: string, subject: string, body: string, headRef: string): Promise<MergeResult>;
+  // Async merge API (works for stacked PRs too), squash, locked to `sha`. Once merged, open PRs based on `head` are
+  // retargeted to `base`, and `head` is deleted only if all of them were (deleting a base closes its PRs).
+  merge(ref: PrRef, sha: string, subject: string, body: string, branches: { head: string; base: string }): Promise<MergeResult>;
   openPrsWithHead(repo: string, branch: string): Promise<number[]>; // open PRs whose head is `branch` (stack check)
   postReview(ref: PrRef, review: GithubReview): Promise<{ url: string }>;
   comment(ref: PrRef, body: string): Promise<void>;
