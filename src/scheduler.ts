@@ -9,10 +9,10 @@ import type {
 } from './contracts.js';
 import { checkGhScope } from './github.js';
 import { log } from './log.js';
-import { createNotifyPr } from './notify.js';
+import { createNotifyPr, type NotifyOpts } from './notify.js';
 import { GIT_SAFE_ENV } from './repos.js';
 import type { StoreExtras } from './store.js';
-import { reviewJsonSchema, reviewOutputSchema, shepherdJsonSchema, shepherdOutputSchema, type ReviewOutput } from './output.js';
+import { reviewJsonSchema, reviewOutputSchema, shepherdJsonSchema, shepherdOutputSchema, type ReviewOutput, type ShepherdOutput } from './output.js';
 
 export type SchedulerDeps = {
   config: Config;
@@ -54,6 +54,8 @@ type Live = {
   interrupted: 'shutdown' | 'paused' | null;
   // Steered messages the SDK has not provably read (seq = queue position); handed back to the inbox at run end.
   steered: { ids: number[]; seq: number }[];
+  // The run read an `owner` event (first message, or steered seqs): the owner gets an update at its end.
+  owner: { first: boolean; steered: number[] };
   lock: Promise<unknown>; // serializes steer vs. end-of-turn decisions
   done: Promise<void>;
 };
@@ -161,7 +163,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
     slack.dm(config.owner.slack, text).catch((err) => log.error({ err }, 'owner DM failed'));
   // A PR that needs the owner: its DM thread (DESIGN §5.6).
   const prNotify = createNotifyPr({ config, store, slack });
-  const notify = (pr: Pr, text: string) => prNotify(pr, text).catch((err: unknown) => log.error({ err }, 'owner DM failed'));
+  const notify = (pr: Pr, text: string, opts?: NotifyOpts) => prNotify(pr, text, opts).catch((err: unknown) => log.error({ err }, 'owner DM failed'));
 
   function poke(prId: number): void {
     if (stopping || paused() || !accepting) return;
@@ -195,6 +197,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
       const policy = pr ? await actuator.policyLine(pr) : '';
       if (live.closing || live.queue.isClosed) return false;
       const ids = pending.map((e) => e.id);
+      if (pending.some((e) => e.kind === 'owner')) live.owner.steered.push(live.queue.pushed);
       live.steered.push({ ids, seq: live.queue.pushed });
       live.queue.push(message(pending, policy));
       await store.claimEvents(ids, live.runId);
@@ -288,6 +291,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
       closing: false,
       interrupted: null,
       steered: [],
+      owner: { first: pending.some((e) => e.kind === 'owner'), steered: [] },
       lock: Promise.resolve(),
       done: new Promise((r) => (resolveDone = r)),
     };
@@ -317,7 +321,9 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
           await store.unclaimEvents?.(unread, run.id);
           log.info({ prId, runId: run.id, events: unread.length }, 'returned unread steered events to the inbox');
         }
-        await finishShepherd(pr, run, prev, outcome, live.interrupted);
+        const unreadSeqs = new Set(live.steered.map((s) => s.seq));
+        const ownerAsked = live.owner.first || live.owner.steered.some((seq) => !unreadSeqs.has(seq));
+        await finishShepherd(pr, run, prev, outcome, live.interrupted, ownerAsked);
       } catch (err) {
         log.error({ err, prId, runId: run.id }, 'run bookkeeping failed');
       } finally {
@@ -419,8 +425,11 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
     return { usage: last.usage, modelUsage: last.modelUsage, costUsd: last.total_cost_usd };
   }
 
-  async function finishShepherd(pr: Pr, run: Run, prev: Run | null, o: Outcome, interrupted: Live['interrupted']) {
+  async function finishShepherd(pr: Pr, run: Run, prev: Run | null, o: Outcome, interrupted: Live['interrupted'], ownerAsked = false) {
     const v = judge(o, interrupted !== null, shepherdOutputSchema);
+    // The owner replied and is waiting to hear back: a run that dies retrying must not go silent.
+    const failedAfterOwner = (what: string) =>
+      ownerAsked ? notify(pr, `:warning: the run after your reply ${what}; retrying once, then I'll hand it back to you.`, { update: true }) : undefined;
     const base = { turns: o.turns, usage: usageOf(o.last), endedAt: now(), sessionId: o.sessionId ?? run.sessionId };
     const dedupeKey = `run:${run.id}`;
     const ref = `${pr.repo}#${pr.number}`;
@@ -430,8 +439,11 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
     // boot recovery's `restarted` (same dedupe key) then collapses into the event already written.
     switch (v.status) {
       case 'ok': {
+        // Only a run that handled the owner's words reports back; one that forgot falls back to its status line.
+        const out = v.output as ShepherdOutput;
+        out.owner_update = ownerAsked ? out.owner_update || out.status_line : null;
         // Record first, then act: the output is persisted before the actuator acts on it (DESIGN §5.5).
-        const saved = await store.updateRun(run.id, { ...base, status: 'ok', output: v.output as Run['output'] });
+        const saved = await store.updateRun(run.id, { ...base, status: 'ok', output: out as Run['output'] });
         await applyWithRetry(saved, 1);
         return;
       }
@@ -447,6 +459,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
         } else {
           await store.addEvent({ prId: pr.id, kind: 'continue', payload: { rejected: 'invalid output', error: v.error }, dedupeKey });
           await store.updateRun(run.id, { ...base, status: 'bad_output' });
+          await failedAfterOwner('returned invalid output');
         }
         return;
       case 'quota':
@@ -471,6 +484,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
         } else {
           await store.addEvent({ prId: pr.id, kind: 'continue', payload: { reason: 'error' }, dedupeKey });
           await store.updateRun(run.id, { ...base, status: 'error' });
+          await failedAfterOwner(`failed (${(v.error ?? 'unknown error').slice(0, 200)})`);
         }
     }
   }

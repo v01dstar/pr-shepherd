@@ -67,7 +67,7 @@ describe('prMeta', () => {
         data: {
           repository: {
             pullRequest: {
-              state: 'OPEN', isDraft: false, title: 'T', body: 'B', headRefName: 'feat', headRefOid: 'abc',
+              state: 'OPEN', isDraft: false, title: 'T', body: 'B', headRefName: 'feat', headRefOid: 'abc', baseRefName: 'main',
               authorAssociation: 'MEMBER', author: { login: 'owner-login' },
             },
           },
@@ -78,7 +78,7 @@ describe('prMeta', () => {
     const m = await gh.prMeta({ repo: 'your-org/example-cli', number: 271 });
     expect(m).toEqual({
       repo: 'your-org/example-cli', number: 271, state: 'OPEN', author: 'owner-login', isDraft: false, title: 'T', body: 'B',
-      headRef: 'feat', headSha: 'abc', authorIsOrgMember: true,
+      headRef: 'feat', headSha: 'abc', baseRef: 'main', authorIsOrgMember: true,
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.args.slice(0, 2)).toEqual(['api', 'graphql']);
@@ -136,22 +136,64 @@ describe('prStates', () => {
 });
 
 describe('merge / postReview / comment / login', () => {
-  it('merge: squash, delete branch, SHA lock, body on stdin', async () => {
-    const { exec, calls } = fakeExec();
-    const gh = createGithub({ config, exec });
-    expect(await gh.merge({ repo: 'o/r', number: 5 }, 'abc123', 'Fix it (#5)', 'body `x`')).toEqual({ ok: true });
-    expect(calls[0]).toEqual({
-      cmd: 'gh',
-      args: ['pr', 'merge', '5', '--repo', 'o/r', '--squash', '--delete-branch', '--match-head-commit', 'abc123', '--subject', 'Fix it (#5)', '--body-file', '-'],
-      input: 'body `x`',
+  const ref = { repo: 'o/r', number: 5 };
+  const PUT = 'repos/o/r/pulls/5/merge-async';
+  const noSleep = async () => {};
+
+  it('merge: PUT merge-async (squash, SHA lock, body), poll until merged, delete the head branch', async () => {
+    let polls = 0;
+    const { exec, calls } = fakeExec((c) => {
+      if (c.args[1] === PUT) return JSON.stringify({ status: 'pending', details: { uuid: 'u1' } });
+      if (c.args[1] === `${PUT}/u1`) return JSON.stringify(++polls < 2 ? { status: 'pending', details: { uuid: 'u1' } } : { status: 'merged', details: { sha: 'm123' } });
+      return '';
     });
+    const gh = createGithub({ config, exec, sleep: noSleep });
+    expect(await gh.merge(ref, 'abc123', 'Fix it (#5)', 'body `x`', 'feat/a')).toEqual({ ok: true, sha: 'm123' });
+    expect(calls[0]).toEqual({
+      cmd: 'gh', args: ['api', PUT, '--method', 'PUT', '--input', '-'],
+      input: JSON.stringify({ merge_method: 'squash', sha: 'abc123', commit_title: 'Fix it (#5)', commit_message: 'body `x`' }),
+    });
+    expect(calls.map((c) => c.args.slice(0, 2).join(' '))).toEqual([
+      `api ${PUT}`, `api ${PUT}/u1`, `api ${PUT}/u1`, 'api repos/o/r/git/refs/heads/feat%2Fa',
+    ]);
+    expect(calls[3]!.args).toContain('DELETE');
   });
-  it('merge: gh failure becomes {ok:false}', async () => {
-    const { exec } = fakeExec(() => new Error('gh pr merge failed: Head branch was modified'));
+
+  it('merge: 409 follows the pending request; enqueued is ok but not merged (branch kept)', async () => {
+    const { exec, calls } = fakeExec((c) => {
+      if (c.args[1] === PUT) {
+        return Object.assign(new Error('gh api repos/o/r/pulls/5/merge-async failed: gh: conflict (HTTP 409)'), {
+          stdout: JSON.stringify({ status: 'pending', details: { uuid: 'u9' } }),
+        });
+      }
+      return JSON.stringify({ status: 'enqueued', details: { message: 'queued' } });
+    });
+    const gh = createGithub({ config, exec, sleep: noSleep });
+    expect(await gh.merge(ref, 'abc', 's', 'b', 'feat')).toEqual({ ok: true, queued: true });
+    expect(calls.map((c) => c.args[1])).toEqual([PUT, `${PUT}/u9`]);
+  });
+
+  it('merge: failed result, HTTP errors and a never-ending pending become {ok:false}', async () => {
+    const failed = createGithub({ config, sleep: noSleep, exec: fakeExec((c) =>
+      c.args[1] === PUT ? JSON.stringify({ status: 'pending', details: { uuid: 'u' } }) : JSON.stringify({ status: 'failed', details: { message: 'Head branch was modified' } }),
+    ).exec });
+    expect(await failed.merge(ref, 'abc', 's', 'b', 'feat')).toEqual({ ok: false, error: 'merge-async failed: Head branch was modified' });
+
+    const refused = createGithub({ config, exec: fakeExec(() => new Error('gh api failed: Pull Request is not mergeable (HTTP 400)')).exec });
+    expect(await refused.merge(ref, 'abc', 's', 'b', 'feat')).toEqual({ ok: false, error: 'gh api failed: Pull Request is not mergeable (HTTP 400)' });
+
+    let t = 0;
+    const stuck = createGithub({ config, now: () => (t += 60_000), sleep: noSleep, exec: fakeExec(() => JSON.stringify({ status: 'pending', details: { uuid: 'u' } })).exec });
+    expect(await stuck.merge(ref, 'abc', 's', 'b', 'feat')).toEqual({ ok: false, error: 'merge-async: still pending after 3m (request u)' });
+  });
+
+  it('openPrsWithHead: open PR numbers whose head is the branch', async () => {
+    const { exec, calls } = fakeExec(() => JSON.stringify({ data: { repository: { pullRequests: { nodes: [{ number: 75 }] } } } }));
     const gh = createGithub({ config, exec });
-    const r = await gh.merge({ repo: 'o/r', number: 5 }, 'abc', 's', 'b');
-    expect(r).toEqual({ ok: false, error: 'gh pr merge failed: Head branch was modified' });
+    expect(await gh.openPrsWithHead('o/r', 'feat-a')).toEqual([75]);
+    expect(calls[0]!.args).toContain('head=feat-a');
   });
+
   it('postReview: POSTs JSON via stdin with RIGHT-side comments', async () => {
     const { exec, calls } = fakeExec(() => JSON.stringify({ html_url: 'https://github.com/o/r/pull/5#pullrequestreview-1' }));
     const gh = createGithub({ config, exec });

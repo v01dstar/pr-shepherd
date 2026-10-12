@@ -26,8 +26,7 @@ Take these values from the latest `[context]` line; never guess them.
 - Your **structured output is the only channel** back to the harness. There are no harness tools.
 - **Never post to Slack.** Review / approve requests to reviewer bots are sent by the harness when you
   output `next: request_review` / `request_approve`.
-- **Never run `gh pr merge`.** Output `next: merge` with the head SHA; the harness merges with
-  `--match-head-commit`.
+- **Never run `gh pr merge`.** Output `next: merge` with the head SHA; the harness merges only that head.
 - Every event message has a `[policy]` line (auto_merge, rounds per bot, runs) followed by the `[context]`
   line. Respect the policy, but the harness enforces it; a rejected `next` comes back to you with the reason.
 - Events can be steered into a running turn. Your final output must cover **all** events you received.
@@ -78,7 +77,8 @@ Read it first on every run, update it last.
    - `owner`: the owner speaking. Do what they say; highest priority, overrides everything below. After an
      escalation this is usually the answer (e.g. "added the e2e test in <org>/e2e#12, continue"): pick the
      escalated items back up from the notes (§ Work outside this repository).
-   - `merge_failed`: read the gh error; usually rebase needed or CI not done.
+   - `merge_failed`: read the error; usually rebase needed or CI not done. `stacked on #N`: this PR's base
+     is another open PR's branch; `wait` (or `escalate` if nothing moves) until #N merges, then rebase (§ Rebase).
    - `continue`: you ran out of turns last time; pick up from the notes.
    - `restarted`: see below.
 4. Decide `next`:
@@ -159,6 +159,10 @@ changes). No headings, no bullet lists of everything you read.
 Only when needed: `DIRTY`; `BEHIND` and the repo requires up-to-date branches; or a reviewer's point
 depends on new base changes.
 
+Stacked PR whose lower PR was squash-merged: GitHub retargets this PR to the lower PR's base, but the
+lower PR's original commits are still on this branch. Replay only this PR's own commits:
+`git rebase --onto origin/<new base> <old base branch's last commit>`.
+
 1. Record the remote head SHA before rebasing.
 2. `git fetch && git rebase origin/<base>`; understand both sides' intent, resolve conflicts.
 3. Run the full test suite.
@@ -189,4 +193,8 @@ If `auto_merge=off` the harness asks the owner; that is not your concern.
   severity (`-` for human comments without one), action, commit (fix only), note.
 - `rebase`: `{onto: "main@<sha>", conflicts: [...], note}` or `null`.
 - `status_line`: one line for `status` and the daily report, e.g. "waiting on review-bot r2; CI green".
+- `owner_update`: when this run handled an `owner` event, ≤ 5 lines the bot posts in the PR's DM thread:
+  what you did (e.g. "force-pushed 2c6dee6 over 4804209, rebased onto main@1a2b3c4"), the result (CI,
+  who was asked to re-approve), and what happens next or what is still needed from the owner. The harness
+  appends the merge result itself. No `owner` event → `null`.
 - `next`: exactly one action.

@@ -9,6 +9,8 @@ const EXEC_TIMEOUT_MS = 60_000;
 const TOKEN_CACHE_MS = 60 * 60 * 1000;
 const TOKEN_CACHE_MAX = 256;
 const STATES_BATCH = 100;
+const MERGE_POLL_MS = 2_000;
+const MERGE_WAIT_MS = 3 * 60_000;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export const defaultExec: Exec = (cmd, args, opts = {}) =>
@@ -21,7 +23,7 @@ export const defaultExec: Exec = (cmd, args, opts = {}) =>
         if (err) {
           // Only the subcommand goes into the message; args may carry request bodies.
           const what = [cmd, ...args.slice(0, 2)].join(' ');
-          reject(new Error(`${what} failed: ${(stderr || err.message).trim()}`));
+          reject(Object.assign(new Error(`${what} failed: ${(stderr || err.message).trim()}`), { stdout }));
         } else resolve({ stdout, stderr });
       },
     );
@@ -40,6 +42,14 @@ export function stripHandoff(body: string): string {
     .trim();
 }
 
+function parseJson<T>(s: string | undefined): T | undefined {
+  try {
+    return s ? (JSON.parse(s) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function checkRepo(repo: string): [string, string] {
   if (!REPO_RE.test(repo) || repo.includes('..')) throw new Error(`invalid repo ${JSON.stringify(repo)}`);
   const [owner, name] = repo.split('/') as [string, string];
@@ -47,11 +57,11 @@ function checkRepo(repo: string): [string, string] {
 }
 
 const PR_META_QUERY = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-  state isDraft title body headRefName headRefOid authorAssociation author{login}}}}`;
+  state isDraft title body headRefName headRefOid baseRefName authorAssociation author{login}}}}`;
 
 type PrNode = {
   state: PrMeta['state']; isDraft: boolean; title: string; body: string; headRefName: string; headRefOid: string;
-  authorAssociation: string; author: { login: string } | null;
+  baseRefName: string; authorAssociation: string; author: { login: string } | null;
 };
 
 // ---------- gh_read allowlist (DESIGN §7.2) ----------
@@ -187,15 +197,19 @@ function splitLong(a: string): [string, string | undefined] {
 
 // ---------- factory ----------
 
+type AsyncMerge = { status: 'pending' | 'merged' | 'enqueued' | 'failed'; details?: { uuid?: string; sha?: string; message?: string } };
+
 export function createGithub(opts: {
   config: Config;
   exec?: Exec;
   fetch?: typeof fetch;
   now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }): GithubPort {
   const exec = opts.exec ?? defaultExec;
   const doFetch = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const tokenCache = new Map<string, { ok: boolean; at: number }>();
   let loginP: Promise<string> | undefined;
 
@@ -256,6 +270,7 @@ export function createGithub(opts: {
         body: pr.body,
         headRef: pr.headRefName,
         headSha: pr.headRefOid,
+        baseRef: pr.baseRefName,
         authorIsOrgMember: pr.authorAssociation === 'MEMBER' || pr.authorAssociation === 'OWNER',
       };
     },
@@ -279,17 +294,45 @@ export function createGithub(opts: {
       return out;
     },
 
-    async merge(ref, sha, subject, body) {
-      checkRepo(ref.repo);
+    // PUT .../merge-async, then poll its result. `gh pr merge` and PUT .../merge refuse stacked PRs; this endpoint
+    // takes them, and merges every open PR below one (the actuator only merges a PR based on no other open PR).
+    async merge(ref, sha, subject, body, headRef) {
+      const [owner, name] = checkRepo(ref.repo);
+      const path = `repos/${owner}/${name}/pulls/${ref.number}/merge-async`;
+      // merge_action default: the base branch's merge queue if it has one, else a direct merge.
+      const payload = { merge_method: 'squash', sha, commit_title: subject, commit_message: body };
+      let res: AsyncMerge;
       try {
-        await gh(
-          ['pr', 'merge', String(ref.number), '--repo', ref.repo, '--squash', '--delete-branch', '--match-head-commit', sha, '--subject', subject, '--body-file', '-'],
-          body,
-        );
-        return { ok: true };
+        res = JSON.parse((await gh(['api', path, '--method', 'PUT', '--input', '-'], JSON.stringify(payload))).stdout) as AsyncMerge;
       } catch (e) {
-        return { ok: false, error: (e as Error).message };
+        // 409: a merge request for this PR is already pending; follow that one.
+        const uuid = /HTTP 409/.test((e as Error).message) ? parseJson<AsyncMerge>((e as { stdout?: string }).stdout)?.details?.uuid : undefined;
+        if (!uuid) return { ok: false, error: (e as Error).message };
+        res = { status: 'pending', details: { uuid } };
       }
+      const uuid = res.details?.uuid;
+      const deadline = now() + MERGE_WAIT_MS;
+      while (res.status === 'pending') {
+        if (!uuid) return { ok: false, error: 'merge-async: pending without a request id' };
+        if (now() >= deadline) return { ok: false, error: `merge-async: still pending after ${MERGE_WAIT_MS / 60_000}m (request ${uuid})` };
+        await sleep(MERGE_POLL_MS);
+        res = JSON.parse((await gh(['api', `${path}/${uuid}`])).stdout) as AsyncMerge;
+      }
+      if (res.status === 'failed') return { ok: false, error: `merge-async failed: ${res.details?.message ?? 'no message'}` };
+      if (res.status === 'enqueued') return { ok: true, queued: true };
+      // Best effort, like `gh pr merge --delete-branch`; GitHub retargets PRs that were based on it.
+      await gh(['api', `repos/${owner}/${name}/git/refs/heads/${encodeURIComponent(headRef)}`, '--method', 'DELETE']).catch((e: Error) =>
+        log.warn({ err: e.message, pr: `${ref.repo}#${ref.number}` }, 'merge: could not delete the head branch'),
+      );
+      return { ok: true, sha: res.details?.sha };
+    },
+
+    async openPrsWithHead(repo, branch) {
+      const [owner, name] = checkRepo(repo);
+      const q = `query($owner:String!,$name:String!,$head:String!){repository(owner:$owner,name:$name){
+        pullRequests(headRefName:$head,states:OPEN,first:10){nodes{number}}}}`;
+      const data = await graphql<{ repository: { pullRequests: { nodes: { number: number }[] } } | null }>(q, { owner, name, head: branch });
+      return data.repository?.pullRequests.nodes.map((n) => n.number) ?? [];
     },
 
     async postReview(ref: PrRef, review: GithubReview) {

@@ -59,6 +59,9 @@ const github = {
     merges.push(sha);
     return { ok: true } as const;
   },
+  async openPrsWithHead() {
+    return [];
+  },
   async comment() {},
 } as unknown as GithubPort;
 
@@ -82,7 +85,7 @@ beforeEach(async () => {
   await pg.exec(migration);
   const db: Db = { query: async (t, p) => (await pg.query(t, p)) as never };
   store = createStore(db);
-  meta = { ...ref, state: 'OPEN', author: config.owner.github, isDraft: false, title: 't', body: '', headRef: 'feat', headSha: 'abcdef1234567', authorIsOrgMember: true };
+  meta = { ...ref, state: 'OPEN', author: config.owner.github, isDraft: false, title: 't', body: '', headRef: 'feat', headSha: 'abcdef1234567', baseRef: 'main', authorIsOrgMember: true };
   posts = [];
   dms = [];
   reactions = [];
@@ -180,7 +183,7 @@ describe('commands (DESIGN §9)', () => {
     const r = await store.createRun({ prId: pr.id });
     const output: ShepherdOutput = {
       handled: [{ reviewer: 'review-bot', review_url: 'u', items: [{ url: 'x', severity: 'Critical', action: 'fix', commit: 'def5678', note: 'n' }] }],
-      rebase: null, status_line: 'waiting on review-bot re-review', next: { action: 'wait', minutes: 5, reason: 'ci' },
+      rebase: null, status_line: 'waiting on review-bot re-review', owner_update: null, next: { action: 'wait', minutes: 5, reason: 'ci' },
     };
     await store.updateRun(r.id, { status: 'ok', output, appliedAt: new Date() });
     await run({ kind: 'status' });
@@ -301,7 +304,7 @@ describe('timers and recovery (DESIGN §5.7)', () => {
     const done = await store.createRun({ prId: pr.id });
     await store.updateRun(done.id, {
       status: 'ok',
-      output: { handled: [], rebase: null, status_line: 's', next: { action: 'wait', minutes: 10, reason: 'ci' } },
+      output: { handled: [], rebase: null, status_line: 's', owner_update: null, next: { action: 'wait', minutes: 10, reason: 'ci' } },
     });
     const cut = await store.createRun({ prId: pr.id });
     const job = await store.addJob({ repo: 'your-org/other', number: 3, kind: 'review', requestedBy: 'U1', channel: 'C9', threadTs: '9.0' });

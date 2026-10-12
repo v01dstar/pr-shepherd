@@ -67,7 +67,7 @@ agent: handle both reviews together, push, reply, resolve ─▶ next: request_r
 agent: all approved ─▶ next: request_approve
 review-bot ─thread─▶ approved as reviewer-account (<…#pullrequestreview-3>)  ─▶ wake agent
 agent: CI green, CLEAN ─▶ next: merge sha=abc1234
-harness: gh pr merge --squash --match-head-commit abc1234 ─▶ merged ─▶ clean up workspace
+harness: PUT pulls/N/merge-async (squash, sha=abc1234) ─▶ merged ─▶ clean up workspace
 ```
 
 ## 4. Identity and credentials
@@ -209,6 +209,7 @@ The schema is defined with zod in `src/output.ts`. `z.toJSONSchema()` produces t
   ],
   "rebase": { "onto": "main@9a8b7c6", "conflicts": ["src/foo.ts"], "note": "…" },   // null when none
   "status_line": "waiting for review-bot re-review; CI green",   // one line for the status command and daily report
+  "owner_update": null,   // after an `owner` event: ≤5 lines for the owner's DM thread (what was done, result, next)
   "next": { "action": "request_review", "reviewers": ["review-bot"], "summary": "…", "resend": false }
 }
 ```
@@ -219,7 +220,7 @@ The schema is defined with zod in `src/output.ts`. `z.toJSONSchema()` produces t
 |---|---|---|
 | `request_review {reviewers, summary, resend}` | Send requests per §5.3; for non-resends, each bot's round +1 | Reviewer is in the PR's reviewer set; the bot has no open, non-timed-out request; rounds do not exceed `max_rounds` |
 | `request_approve {approvers?}` | Ask the configured approvers (all of them, or the named subset) to approve; `{mentions}` templates merge into one message; the first approval wins | Names must be configured approvers; an approver with a live, non-stalled request is skipped; at most 2 requests per approver per head SHA; nothing sendable → rejected with the reason |
-| `merge {sha, title}` | `gh pr merge --squash --delete-branch --match-head-commit <sha>`, body = PR body minus the handoff block | `auto_merge` is on and not paused; when off, wait for the owner's confirmation (in the PR's DM thread; `merge <pr>` releases it) |
+| `merge {sha, title}` | `PUT /repos/{o}/{r}/pulls/{n}/merge-async` (squash, `sha` = expected head, title = `<title> (#n)`, body = PR body minus the handoff block), then poll `GET …/merge-async/{uuid}` until `merged` / `enqueued` / `failed` (a 409 means a request is pending: follow its uuid); delete the head branch once merged. `gh pr merge` and `PUT …/merge` refuse stacked PRs; this endpoint takes them but merges every open PR below one, so a PR whose base is another open PR's head is refused (`merge_failed: stacked on #N`). `enqueued` (merge queue) leaves the PR active; the sweep sees it merge | `auto_merge` is on and not paused; when off, wait for the owner's confirmation (in the PR's DM thread; `merge <pr>` releases it) |
 | `wait {minutes, reason}` | Timer; delivers `timer` when due | `minutes` ≤ 60 |
 | `escalate {reason}` | Tell the owner (PR's DM thread, §5.6) the reason and the escalated items in `handled`; move to `needs_human` | — |
 | `done {reason}` | The PR has been closed or no longer needs management: enter a terminal state | Harness checks state once to confirm it is closed / merged |
@@ -241,7 +242,7 @@ The schema is defined with zod in `src/output.ts`. `z.toJSONSchema()` produces t
 | Runs per PR, `maxRunsPerPr` (default 30, including wait, continue, resend) | Move to `needs_human` |
 | Subscription quota | Pause all pools until the reset time, then resume; DM the owner |
 
-- **One DM thread per PR, only when needed.** The owner is DMed about a PR only when it needs them: entering `needs_human` (the reason) or a merge waiting for confirmation. The first such DM starts the PR's thread (`prs.dm_channel` / `prs.dm_ts`); later ones reply in it, broadcast so they also show in the DM. The database guarantees one thread: the thread is recorded with a compare-and-set (`… where dm_ts is null`), so when two notices race on a PR that has none, both DM, one wins, and the loser deletes its DM (`chat.delete`) and replies in the winner's thread. Informational notices (merged, a run retried once, closed outside the bot) are not DMed; the daily report covers them.
+- **One DM thread per PR, only when needed.** The owner is DMed about a PR only when it needs them: entering `needs_human` (the reason) or a merge waiting for confirmation. The first such DM starts the PR's thread (`prs.dm_channel` / `prs.dm_ts`); later ones reply in it, broadcast so they also show in the DM. The database guarantees one thread: the thread is recorded with a compare-and-set (`… where dm_ts is null`), so when two notices race on a PR that has none, both DM, one wins, and the loser deletes its DM (`chat.delete`) and replies in the winner's thread. Informational notices (merged, a run retried once, closed outside the bot) are not DMed; the daily report covers them. Once the PR has a thread, though, the owner hears back in it: after a run that handled an `owner` event the harness replies with the agent's `owner_update` plus what only the harness knows (merge result, a refused next step); if that run fails it says so before retrying; and merging or closing posts a one-line summary (merge sha, review rounds, runs). These replies are not broadcast.
 - Ways out of `needs_human`: **a reply in the PR's DM thread** (delivered as an `owner` event; the PR goes back to `active` and the harness reacts `:eyes:`; a reply while the PR is active is steered the same way, like `tell`), a reply in a request thread, `tell`, or `resume`; if the reason was rounds, raising them with `set rounds=` resumes automatically. `resume` resets the run count. In a DM thread, text that parses as a command (`merge <pr>`, `status`, `resume <pr>`, …) is still a command.
 - Global emergency stop: `pause all` interrupts all runs and freezes all timers; `resume all` resumes.
 
@@ -350,7 +351,7 @@ session: <local session ID, optional>
 
 ### 6.5 Merge
 
-- The agent only decides whether the PR can be merged and outputs `merge {sha}`; the harness executes it (§5.5). `--match-head-commit` guarantees that the merged commit is the one the agent examined.
+- The agent only decides whether the PR can be merged and outputs `merge {sha}`; the harness executes it (§5.5). The merge request's `sha` (the expected head) guarantees that the merged commit is the one the agent examined.
 - `BEHIND` / `DIRTY` → rebase first, `wait` for CI, and `request_approve` again if the approval was dismissed.
 
 ## 7. G3: review / approve other people's PRs

@@ -5,7 +5,7 @@ import { createActuator } from '../src/actuator.js';
 import { createInbox } from '../src/inbox.js';
 import { stripHandoff } from '../src/github.js';
 import { loadConfig } from '../src/config.js';
-import type { Db, GithubPort, Pr, PrMeta, Repos, Run, SlackPort } from '../src/contracts.js';
+import type { Db, GithubPort, Pr, PrMeta, Repos, Run, SlackPort, MergeResult } from '../src/contracts.js';
 import type { Next, ShepherdOutput } from '../src/output.js';
 import { createStore } from '../src/store.js';
 
@@ -30,7 +30,8 @@ let posts: { channel: string; text: string; threadTs?: string; ts: string }[];
 let dms: string[];
 let comments: string[];
 let merges: { sha: string; subject: string; body: string }[];
-let mergeResult: { ok: true } | { ok: false; error: string };
+let mergeResult: MergeResult;
+let below: number[];
 let meta: PrMeta;
 let cleaned: string[];
 let actuator: ReturnType<typeof createActuator>;
@@ -63,6 +64,9 @@ const github = {
     merges.push({ sha, subject, body });
     return mergeResult;
   },
+  async openPrsWithHead() {
+    return below;
+  },
   async comment(_ref: unknown, body: string) {
     comments.push(body);
   },
@@ -91,7 +95,8 @@ beforeEach(async () => {
   merges = [];
   cleaned = [];
   mergeResult = { ok: true };
-  meta = { ...ref, state: 'OPEN', author: 'owner-login', isDraft: false, title: 'feat', body: 'Body\n<!-- pr-shepherd:handoff v1\nagent: x\n-->\n### Handoff\n**Intent**: y\n<!-- /pr-shepherd:handoff -->\n', headRef: 'f', headSha: 'abc1234', authorIsOrgMember: true };
+  below = [];
+  meta = { ...ref, state: 'OPEN', author: 'owner-login', isDraft: false, title: 'feat', body: 'Body\n<!-- pr-shepherd:handoff v1\nagent: x\n-->\n### Handoff\n**Intent**: y\n<!-- /pr-shepherd:handoff -->\n', headRef: 'f', headSha: 'abc1234', baseRef: 'main', authorIsOrgMember: true };
   actuator = createActuator({ config, store, slack, github, repos, now: () => clock });
 });
 
@@ -102,12 +107,12 @@ async function newPr(reviewers = ['review-bot', 'codex-bot', 'summary-bot-a', 's
 }
 
 function out(next: Next, handled: ShepherdOutput['handled'] = []): ShepherdOutput {
-  return { handled, rebase: null, status_line: 'x', next };
+  return { handled, rebase: null, status_line: 'x', owner_update: null, next };
 }
 
-async function runWith(pr: Pr, next: Next, handled?: ShepherdOutput['handled']): Promise<Run> {
+async function runWith(pr: Pr, next: Next, handled?: ShepherdOutput['handled'], ownerUpdate: string | null = null): Promise<Run> {
   const r = await store.createRun({ prId: pr.id });
-  return store.updateRun(r.id, { status: 'ok', output: out(next, handled) });
+  return store.updateRun(r.id, { status: 'ok', output: { ...out(next, handled), owner_update: ownerUpdate } });
 }
 
 const review = (reviewers: string[], resend = false): Next => ({ action: 'request_review', reviewers, summary: 'fixed the thing', resend });
@@ -343,6 +348,49 @@ describe('merge', () => {
     const ev = await store.pendingEvents(pr.id);
     expect(ev.map((e) => [e.kind, e.payload.error])).toEqual([['merge_failed', 'head changed']]);
     expect((await store.getPr(pr.id))!.status).toBe('active');
+  });
+
+  it('refuses a stacked PR (merge-async would merge the PRs below it) → merge_failed', async () => {
+    const pr = await newPr();
+    below = [75];
+    meta = { ...meta, baseRef: 'feat-75' };
+    await actuator.apply(await runWith(pr, { action: 'merge', sha: 'abc1234', title: 't' }));
+    expect(merges).toEqual([]);
+    const ev = await store.pendingEvents(pr.id);
+    expect(ev.map((e) => e.kind)).toEqual(['merge_failed']);
+    expect(ev[0]!.payload.error).toMatch(/^stacked on #75 \(base feat-75\)/);
+  });
+
+  it('merge queue: queued is not merged; the PR stays active', async () => {
+    const pr = await newPr();
+    mergeResult = { ok: true, queued: true };
+    await actuator.apply(await runWith(pr, { action: 'merge', sha: 'abc1234', title: 't' }));
+    expect((await store.getPr(pr.id))!.status).toBe('active');
+    expect(cleaned).toEqual([]);
+  });
+
+  it('owner_update goes to the DM thread with the merge result; a merge with a thread gets a summary', async () => {
+    const pr = await newPr();
+    await store.claimDmThread(pr.id, 'D-owner', '9001.0');
+    mergeResult = { ok: true, sha: 'f00dbeef1234' };
+    await actuator.apply(await runWith(pr, { action: 'merge', sha: 'abc1234', title: 't' }, [], 'Rebased onto main@1a2b3c4; CI green.'));
+    expect(posts.map((p) => [p.channel, p.threadTs, p.text])).toEqual([
+      ['D-owner', '9001.0', 'Rebased onto main@1a2b3c4; CI green.\nyour-org/example-cli#271 merged as f00dbee · review rounds review-bot=0 codex-bot=0 summary-bot-a=0 summary-bot-b=0 · runs 0'],
+    ]);
+    expect(dms).toEqual([]);
+  });
+
+  it('owner_update reports a failed merge; no thread and no owner_update → silent merge', async () => {
+    const pr = await newPr();
+    mergeResult = { ok: false, error: 'head changed' };
+    await actuator.apply(await runWith(pr, { action: 'merge', sha: 'abc1234', title: 't' }, [], 'Pushed 2c6dee6.'));
+    expect(dms).toEqual(['Pushed 2c6dee6.\n:x: merge failed: head changed']); // owner_update starts the thread
+
+    const quiet = (await store.upsertPr({ ...ref, number: 272 }, ['review-bot'], 4)).pr;
+    mergeResult = { ok: true, sha: 'f00d' };
+    await actuator.apply(await runWith(quiet, { action: 'merge', sha: 'abc1234', title: 't' }));
+    expect(dms).toHaveLength(1);
+    expect(posts).toEqual([]);
   });
 
   it('auto_merge off: stores pendingMerge and asks the owner', async () => {

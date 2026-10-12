@@ -200,8 +200,12 @@ export type PrMeta = PrRef & {
   body: string;
   headRef: string;
   headSha: string;
+  baseRef: string;
   authorIsOrgMember: boolean;
 };
+
+// queued: the PR went into a merge queue; it is not merged yet (the sweep sees it merge).
+export type MergeResult = { ok: true; sha?: string; queued?: boolean } | { ok: false; error: string };
 
 export type GithubReview = {
   event: 'COMMENT' | 'APPROVE';
@@ -214,7 +218,9 @@ export interface GithubPort {
   verifyOwnerToken(token: string): Promise<boolean>; // GET /user with that token == config.owner.github; cached by hash 1h
   prMeta(ref: PrRef): Promise<PrMeta>;
   prStates(refs: PrRef[]): Promise<Map<string, PrMeta['state']>>; // key `${repo}#${number}`; batched GraphQL
-  merge(ref: PrRef, sha: string, subject: string, body: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  // Async merge API (works for stacked PRs too), squash, locked to `sha`; deletes headRef once merged.
+  merge(ref: PrRef, sha: string, subject: string, body: string, headRef: string): Promise<MergeResult>;
+  openPrsWithHead(repo: string, branch: string): Promise<number[]>; // open PRs whose head is `branch` (stack check)
   postReview(ref: PrRef, review: GithubReview): Promise<{ url: string }>;
   comment(ref: PrRef, body: string): Promise<void>;
   ghRead(args: string[]): Promise<string>; // read-only allowlist proxy for G3 (DESIGN §7.2)
@@ -256,7 +262,8 @@ export interface Actuator {
 
 // ---------- injectable primitives (so every module is testable without network) ----------
 
-// Runs a command without a shell. Rejects on non-zero exit with stderr in the message.
+// Runs a command without a shell. Rejects on non-zero exit with stderr in the message; the Error also carries
+// `stdout` (gh api prints the error response body there).
 export type Exec = (
   cmd: string,
   args: string[],

@@ -20,6 +20,9 @@ type Deps = {
 
 type Bot = { name: string; slack: string; request: string; rerequest?: string };
 type Outcome = { rejected: string } | { ok: true };
+// What the owner hears after an apply: facts only the harness knows, appended to the agent's owner_update, and
+// the merge/close summary.
+type Notes = { facts: string[]; summary?: string };
 const OK: Outcome = { ok: true };
 const MAX_APPROVES_PER_HEAD = 2;
 // request_ts of a row whose Slack message has not been posted yet.
@@ -45,7 +48,7 @@ export type ActuatorHandle = Actuator & {
   policyLine(pr: Pr): Promise<string>;
   // Owner's `merge <pr>`: executes the stored pendingMerge (DESIGN §5.5 merge row). skipCleanup when a run is live
   // on the PR: its worktree must not vanish under it; the janitor cleans the merged PR later (DESIGN §5.8).
-  releaseMerge(pr: Pr, opts?: { skipCleanup?: boolean }): Promise<{ ok: true } | { ok: false; error: string }>;
+  releaseMerge(pr: Pr, opts?: { skipCleanup?: boolean }): Promise<{ ok: true; queued?: boolean } | { ok: false; error: string }>;
 };
 
 export function createActuator(deps: Deps): ActuatorHandle {
@@ -70,11 +73,28 @@ export function createActuator(deps: Deps): ActuatorHandle {
     await notify(pr, [`${prName(pr)} needs you: ${reason} ${prUrl(pr)}`, detail].filter(Boolean).join('\n'));
   }
 
-  async function terminal(pr: Pr, status: 'merged' | 'closed', skipCleanup = false) {
+  // A merge/close summary goes into `notes` when the caller posts one, else to the PR's DM thread if it has one.
+  async function terminal(pr: Pr, status: 'merged' | 'closed', opts: { skipCleanup?: boolean; mergeSha?: string; notes?: Notes } = {}) {
     await store.updatePr(pr.id, { status, closedAt: now(), pendingMerge: null });
     await store.cancelTimers(pr.id);
-    if (skipCleanup) return;
+    const summary = await summaryLine(pr, status, opts.mergeSha).catch(() => `${prName(pr)} ${status}`);
+    if (opts.notes) opts.notes.summary = summary;
+    else await notify(pr, summary, { update: true, ifThread: true }).catch((e: unknown) => log.warn({ err: e, pr: prName(pr) }, 'summary post failed'));
+    if (opts.skipCleanup) return;
     await repos.cleanup('shepherd', pr).catch((e: unknown) => log.warn({ err: e, pr: prName(pr) }, 'cleanup failed; janitor retries'));
+  }
+
+  async function summaryLine(pr: Pr, status: 'merged' | 'closed', mergeSha?: string) {
+    const rounds = await store.roundsByBot(pr.id);
+    const r = pr.reviewers.map((b) => `${b}=${rounds[b] ?? 0}`).join(' ');
+    const what = status === 'merged' ? (mergeSha ? `merged as ${mergeSha.slice(0, 7)}` : 'merged') : 'closed';
+    return `${prName(pr)} ${what} · review rounds ${r || '-'} · runs ${pr.runCount}`;
+  }
+
+  async function tellOwner(pr: Pr, update: string | null | undefined, notes: Notes) {
+    const text = update ? [update, ...notes.facts, notes.summary].filter(Boolean).join('\n') : notes.summary;
+    if (!text) return;
+    await notify(pr, text, { update: true, ifThread: !update }).catch((e: unknown) => log.warn({ err: e, pr: prName(pr) }, 'owner update failed'));
   }
 
   function botFor(kind: ReviewRequest['kind'], name: string): Bot | undefined {
@@ -207,25 +227,42 @@ export function createActuator(deps: Deps): ActuatorHandle {
     return OK;
   }
 
-  async function merge(pr: Pr, run: Run, next: Extract<Next, { action: 'merge' }>): Promise<Outcome> {
+  async function merge(pr: Pr, run: Run, next: Extract<Next, { action: 'merge' }>, notes: Notes): Promise<Outcome> {
     if (!pr.autoMerge || pr.status !== 'active') {
       await store.updatePr(pr.id, { pendingMerge: { sha: next.sha, title: next.title } });
       await notify(pr, `${prName(pr)} ready to merge @${next.sha.slice(0, 7)} — reply \`merge ${prName(pr)}\``);
       return OK;
     }
-    await doMerge(pr, next.sha, next.title, `merge_failed:${run.id}`);
+    await doMerge(pr, next.sha, next.title, `merge_failed:${run.id}`, { notes });
     return OK;
   }
 
-  async function doMerge(pr: Pr, sha: string, title: string, dedupeKey: string, skipCleanup = false): Promise<boolean> {
+  async function doMerge(
+    pr: Pr, sha: string, title: string, dedupeKey: string, opts: { skipCleanup?: boolean; notes?: Notes } = {},
+  ): Promise<'merged' | 'queued' | false> {
     const meta = await github.prMeta(pr);
-    const res = await github.merge(pr, sha, `${title} (#${pr.number})`, stripHandoff(meta.body));
-    if (!res.ok) {
-      await store.addEvent({ prId: pr.id, kind: 'merge_failed', payload: { error: res.error }, dedupeKey });
-      return false;
+    const failed = async (error: string) => {
+      await store.addEvent({ prId: pr.id, kind: 'merge_failed', payload: { error }, dedupeKey });
+      opts.notes?.facts.push(`:x: merge failed: ${error}`);
+      return false as const;
+    };
+    // The async merge API merges every open PR below a stacked one, so only the bottom of a stack is merged here.
+    const below = await github.openPrsWithHead(pr.repo, meta.baseRef);
+    if (below.length) {
+      return failed(
+        `stacked on #${below.join(', #')} (base ${meta.baseRef}); merging would also merge ${below.length > 1 ? 'those' : 'it'}. ` +
+          `Wait until it merges and GitHub retargets this PR, then rebase onto the new base and merge.`,
+      );
     }
-    await terminal(pr, 'merged', skipCleanup);
-    return true;
+    const res = await github.merge(pr, sha, `${title} (#${pr.number})`, stripHandoff(meta.body), meta.headRef);
+    if (!res.ok) return failed(res.error);
+    if (res.queued) {
+      await store.updatePr(pr.id, { pendingMerge: null });
+      opts.notes?.facts.push(`queued @${sha.slice(0, 7)} in the merge queue`);
+      return 'queued';
+    }
+    await terminal(pr, 'merged', { skipCleanup: opts.skipCleanup, mergeSha: res.sha, notes: opts.notes });
+    return 'merged';
   }
 
   async function escalate(pr: Pr, reason: string, output: ShepherdOutput) {
@@ -233,7 +270,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
     await needsHuman(pr, reason, items.join('\n') || undefined);
   }
 
-  async function execute(pr: Pr, run: Run, output: ShepherdOutput): Promise<Outcome> {
+  async function execute(pr: Pr, run: Run, output: ShepherdOutput, notes: Notes): Promise<Outcome> {
     const next = output.next;
     switch (next.action) {
       case 'request_review':
@@ -241,7 +278,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
       case 'request_approve':
         return requestApprove(pr, run, next);
       case 'merge':
-        return merge(pr, run, next);
+        return merge(pr, run, next, notes);
       case 'wait':
         if (!Number.isInteger(next.minutes) || next.minutes < 1 || next.minutes > 60) return { rejected: `wait minutes must be 1..60, got ${next.minutes}` };
         await store.cancelTimers(pr.id, 'wait');
@@ -256,7 +293,7 @@ export function createActuator(deps: Deps): ActuatorHandle {
           await escalate(pr, `agent said done but the PR is still open: ${next.reason}`, output);
           return OK;
         }
-        await terminal(pr, meta.state === 'MERGED' ? 'merged' : 'closed');
+        await terminal(pr, meta.state === 'MERGED' ? 'merged' : 'closed', { notes });
         return OK;
       }
     }
@@ -284,9 +321,15 @@ export function createActuator(deps: Deps): ActuatorHandle {
         await store.updateRun(run.id, { appliedAt: now() });
         return;
       }
-      const outcome = await execute(pr, run, output);
-      if ('rejected' in outcome) await reject(pr, run, outcome.rejected);
+      const notes: Notes = { facts: [] };
+      const outcome = await execute(pr, run, output, notes);
+      if ('rejected' in outcome) {
+        await reject(pr, run, outcome.rejected);
+        notes.facts.push(`:warning: the next step was refused: ${outcome.rejected}`);
+      }
       await store.updateRun(run.id, { appliedAt: now() });
+      // After appliedAt: a retried apply never posts twice; a failed post is only logged.
+      await tellOwner(pr, output.owner_update, notes);
     },
 
     async onTimer(timer: Timer) {
@@ -327,15 +370,15 @@ export function createActuator(deps: Deps): ActuatorHandle {
       if (pr.status === 'merged' || pr.status === 'closed') return { ok: false, error: `PR is ${pr.status}` };
       if (!pr.pendingMerge) return { ok: false, error: 'no merge is waiting for confirmation' };
       const { sha, title } = pr.pendingMerge;
-      let merged: boolean;
+      let merged: Awaited<ReturnType<typeof doMerge>>;
       try {
         // Each release is its own attempt: the same SHA may be released again after a failure.
-        merged = await doMerge(pr, sha, title, `merge_failed:release:${pr.id}:${sha}:${now().getTime()}`, opts.skipCleanup);
+        merged = await doMerge(pr, sha, title, `merge_failed:release:${pr.id}:${sha}:${now().getTime()}`, { skipCleanup: opts.skipCleanup });
       } catch (e) {
         // pendingMerge is kept, so the owner can simply release again.
         return { ok: false, error: `merge not completed (${e instanceof Error ? e.message : String(e)}); still waiting for \`merge ${prName(pr)}\`` };
       }
-      if (merged) return { ok: true };
+      if (merged) return { ok: true, ...(merged === 'queued' ? { queued: true } : {}) };
       await store.updatePr(pr.id, { pendingMerge: null });
       return { ok: false, error: 'merge failed; the agent was told (merge_failed)' };
     },

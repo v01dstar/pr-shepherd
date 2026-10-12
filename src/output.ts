@@ -31,6 +31,10 @@ export const shepherdOutputSchema = z.object({
   handled: z.array(z.object({ reviewer: z.string(), review_url: z.string(), items: z.array(item) })),
   rebase: z.object({ onto: z.string(), conflicts: z.array(z.string()), note: z.string() }).nullable(),
   status_line: z.string().describe('One line for `status` and the daily report'),
+  owner_update: z
+    .string()
+    .nullable()
+    .describe('When this run handled an `owner` event: ≤5 lines for the owner on what was done, the result, and what is next; else null'),
   next: nextSchema,
 });
 
