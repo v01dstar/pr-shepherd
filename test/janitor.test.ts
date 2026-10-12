@@ -257,7 +257,10 @@ describe('daily', () => {
     await setup({ dataDir, exec, jobs: [{ repo: 'o/b', number: 2, status: 'running' }] }).janitor.daily();
     expect(existsSync(goMod)).toBe(true);
 
-    await setup({ dataDir, exec, prs: [mkPr(1, { repo: 'o/a', number: 1 })] }).janitor.daily();
+    const chmods: string[] = [];
+    const recording: Exec = async (cmd, args) => (cmd === 'chmod' && chmods.push(args.at(-1)!), { stdout: '', stderr: '' });
+    await setup({ dataDir, exec: recording, prs: [mkPr(1, { repo: 'o/a', number: 1 })] }).janitor.daily();
+    expect(chmods).toEqual([join(dataDir, 'cache'), oldTmp]); // read-only Go module caches, also under tmp/
     expect(existsSync(join(dataDir, 'cache'))).toBe(false);
     expect(existsSync(oldTmp)).toBe(false);
     expect(existsSync(newTmp)).toBe(true);

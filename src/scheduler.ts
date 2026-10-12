@@ -7,6 +7,7 @@ import { agentOptions, type Config } from './config.js';
 import type {
   Actuator, GithubPort, InboxEvent, Job, Pr, Repos, Run, RunResult, RunStatus, Scheduler, SlackPort, Store,
 } from './contracts.js';
+import { RESTART_NOTE } from './contracts.js';
 import { checkGhScope } from './github.js';
 import { log } from './log.js';
 import { createNotifyPr, type NotifyOpts } from './notify.js';
@@ -374,6 +375,9 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
           if (m.rate_limit_info.resetsAt) o.resetAt = new Date(m.rate_limit_info.resetsAt * 1000);
         } else if (m.type === 'assistant' && m.error === 'rate_limit') {
           o.rateLimited = true;
+        } else if (m.type === 'system' && m.subtype === 'permission_denied') {
+          // A refusal by Claude Code itself (rule, safety check, mode): the agent sees only the generic message.
+          log.warn({ sessionId: o.sessionId, tool: m.tool_name, type: m.decision_reason_type, reason: m.decision_reason }, 'agent tool call denied by Claude Code');
         } else if (m.type === 'result') {
           o.last = m;
           o.turns += m.num_turns;
@@ -470,7 +474,7 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
       case 'interrupted':
         // Shutdown interrupts get `restarted` at boot (DESIGN §5.7); a pause-all needs its own wake-up.
         if (interrupted === 'paused') {
-          await store.addEvent({ prId: pr.id, kind: 'restarted', payload: { reason: 'paused' }, dedupeKey });
+          await store.addEvent({ prId: pr.id, kind: 'restarted', payload: { reason: 'paused', note: RESTART_NOTE }, dedupeKey });
         }
         await store.updateRun(run.id, { ...base, status: 'interrupted' });
         return;
