@@ -224,6 +224,20 @@ export function createGithub(opts: {
     return res.data;
   }
 
+  // Like `gh pr merge --delete-branch`, except that deleting a branch CLOSES every open PR based on it (GitHub
+  // does not retarget them), so those are moved onto the merged PR's base first; any failure keeps the branch.
+  async function retargetAndDelete(ref: PrRef, branches: { head: string; base: string }) {
+    const [owner, name] = checkRepo(ref.repo);
+    const q = `query($owner:String!,$name:String!,$base:String!){repository(owner:$owner,name:$name){
+      pullRequests(baseRefName:$base,states:OPEN,first:100){nodes{number}}}}`;
+    const data = await graphql<{ repository: { pullRequests: { nodes: { number: number }[] } } | null }>(q, { owner, name, base: branches.head });
+    for (const { number } of data.repository?.pullRequests.nodes ?? []) {
+      await gh(['api', `repos/${owner}/${name}/pulls/${number}`, '--method', 'PATCH', '-f', `base=${branches.base}`]);
+      log.info({ pr: `${ref.repo}#${number}`, base: branches.base }, 'merge: retargeted a PR based on the merged branch');
+    }
+    await gh(['api', `repos/${owner}/${name}/git/refs/heads/${encodeURIComponent(branches.head)}`, '--method', 'DELETE']);
+  }
+
   return {
     async verifyOwnerToken(token) {
       if (!token) return false;
@@ -296,7 +310,7 @@ export function createGithub(opts: {
 
     // PUT .../merge-async, then poll its result. `gh pr merge` and PUT .../merge refuse stacked PRs; this endpoint
     // takes them, and merges every open PR below one (the actuator only merges a PR based on no other open PR).
-    async merge(ref, sha, subject, body, headRef) {
+    async merge(ref, sha, subject, body, branches) {
       const [owner, name] = checkRepo(ref.repo);
       const path = `repos/${owner}/${name}/pulls/${ref.number}/merge-async`;
       // merge_action default: the base branch's merge queue if it has one, else a direct merge.
@@ -320,9 +334,8 @@ export function createGithub(opts: {
       }
       if (res.status === 'failed') return { ok: false, error: `merge-async failed: ${res.details?.message ?? 'no message'}` };
       if (res.status === 'enqueued') return { ok: true, queued: true };
-      // Best effort, like `gh pr merge --delete-branch`; GitHub retargets PRs that were based on it.
-      await gh(['api', `repos/${owner}/${name}/git/refs/heads/${encodeURIComponent(headRef)}`, '--method', 'DELETE']).catch((e: Error) =>
-        log.warn({ err: e.message, pr: `${ref.repo}#${ref.number}` }, 'merge: could not delete the head branch'),
+      await retargetAndDelete(ref, branches).catch((e: Error) =>
+        log.warn({ err: e.message, pr: `${ref.repo}#${ref.number}` }, 'merge: head branch kept'),
       );
       return { ok: true, sha: res.details?.sha };
     },
