@@ -207,7 +207,9 @@ export function createJanitor(deps: {
     const cutoff = now().getTime() - TMP_RETENTION_MS;
     for (const name of await readdir(tmp).catch(() => [])) {
       const p = join(tmp, name);
-      if ((await newestMtime(p).catch(() => Infinity)) < cutoff) await rm(p, { recursive: true, force: true });
+      if ((await newestMtime(p).catch(() => Infinity)) >= cutoff) continue;
+      await exec('chmod', ['-R', 'u+w', p]).catch(() => undefined); // e.g. a Go module cache an agent put here
+      await rm(p, { recursive: true, force: true });
     }
   }
 

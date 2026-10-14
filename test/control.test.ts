@@ -320,6 +320,9 @@ describe('timers and recovery (DESIGN §5.7)', () => {
     expect((await store.runsByStatus(['interrupted'])).map((r) => r.id)).toEqual([cut.id]);
     const kinds = (await store.pendingEvents(pr.id)).map((e) => e.kind);
     expect(kinds).toEqual(expect.arrayContaining(['restarted', 'review_done']));
+    // The restart's cut-off tool call reads like a user rejection; the event tells the agent it was not.
+    const restarted = (await store.pendingEvents(pr.id)).find((e) => e.kind === 'restarted')!;
+    expect(restarted.payload.note).toMatch(/not the owner; re-run it/);
     expect((await store.jobsSince(new Date(0)))[0]).toMatchObject({ status: 'failed' });
     expect(posts.some((p) => p.channel === 'C9' && p.text.includes('restarted'))).toBe(true);
     expect((await store.openRequests(pr.id)).find((r) => r.id === req!.id)).toBeUndefined();

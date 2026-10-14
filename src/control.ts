@@ -4,6 +4,7 @@ import { PENDING_TS, type ActuatorHandle } from './actuator.js';
 import { helpText, ownerOnly } from './commands.js';
 import type { Config } from './config.js';
 import type { Command, GithubPort, Pr, PrRef, Repos, Scheduler, SlackMessage, SlackPort, Store } from './contracts.js';
+import { RESTART_NOTE } from './contracts.js';
 import type { G3 } from './g3.js';
 import { log } from './log.js';
 import { buildReport } from './report.js';
@@ -270,7 +271,7 @@ export function createControl(deps: ControlDeps) {
     // 2. Runs cut off by the restart. Dedupe `run:<id>` matches the scheduler's own restarted/continue events.
     for (const run of await store.runsByStatus(['running', 'interrupted'])) {
       if (run.status === 'running') await store.updateRun(run.id, { status: 'interrupted', endedAt: now() });
-      if (run.prId != null) await store.addEvent({ prId: run.prId, kind: 'restarted', payload: {}, dedupeKey: `run:${run.id}` });
+      if (run.prId != null) await store.addEvent({ prId: run.prId, kind: 'restarted', payload: { note: RESTART_NOTE }, dedupeKey: `run:${run.id}` });
     }
     // G3 jobs live in an in-memory pool; ones cut off by the restart are failed and the requester is told.
     const since = new Date(now().getTime() - JOB_RECOVERY_DAYS * 86_400_000);

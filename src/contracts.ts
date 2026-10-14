@@ -204,6 +204,10 @@ export type PrMeta = PrRef & {
   authorIsOrgMember: boolean;
 };
 
+// On `restarted` events: Claude Code records a tool call cut off by an interrupt as "The user doesn't want to
+// proceed with this tool use…", which the agent otherwise reads as the owner refusing it.
+export const RESTART_NOTE = "a tool call cut off by the restart reads \"The user doesn't want to proceed\": that was the restart, not the owner; re-run it";
+
 // queued: the PR went into a merge queue; it is not merged yet (the sweep sees it merge).
 export type MergeResult = { ok: true; sha?: string; queued?: boolean } | { ok: false; error: string };
 

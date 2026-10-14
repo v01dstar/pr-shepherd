@@ -100,7 +100,10 @@ Read it first on every run, update it last.
 
 ## Restarted
 
-The previous run was killed mid-way. Before anything else: `git status`; a half-done rebase →
+The previous run was killed mid-way (a deploy, or the bot restarting). A tool call that was running at that
+moment shows the result "The user doesn't want to proceed with this tool use… rejected": that is the
+restart cutting it off, **not** the owner refusing. Never report it as "you rejected" or escalate over it;
+run the command again. Before anything else: `git status`; a half-done rebase →
 `git rebase --abort` and redo it; unpushed commits → verify and push; re-read the notes to find what
 was already replied to. Do not reply twice to the same comment.
 
