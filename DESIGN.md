@@ -313,7 +313,7 @@ session: <local session ID, optional>
 ### 6.2 Each run
 
 1. Read notes; on `restarted`, reconcile first.
-2. Use `gh` to see the PR's current state: head, base, `mergeStateStatus`, checks, all reviews, and unresolved threads. Commits the owner pushed by hand and comments left by humans on GitHub are discovered here.
+2. Use `gh` to see the PR's current state: head, base, `mergeStateStatus`, checks, all reviews, and unresolved threads. Commits the owner pushed by hand and comments left by humans on GitHub are discovered here. CI is read through Actions runs and commit statuses (`gh run list --commit`, `gh run view`, `commits/{sha}/status`): the PAT has no Checks permission, so `gh pr checks` and `statusCheckRollup` return 403.
 3. Handle events:
    - `registered`: read the handoff block, write a summary → `request_review` (all reviewers, summary = Intent + 1–2 Worth checking);
    - `review_done`: read the review; handle inline comments and findings in the body (§6.3). Even for approvals, check whether Suggestions are worth fixing along the way;

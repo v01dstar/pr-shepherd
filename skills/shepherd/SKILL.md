@@ -62,6 +62,12 @@ Read it first on every run, update it last.
 1. Read `.pr-shepherd/notes.md`. If the event is `restarted`, reconcile first (below).
 2. Look at the PR as it is now with `gh`: head, base, `mergeStateStatus`, checks, every review, every
    unresolved thread. The owner's manual pushes and human comments on GitHub are discovered here.
+   **CI:** the token has no Checks permission, so `gh pr checks`, `statusCheckRollup` and `…/check-runs`
+   return 403 ("Resource not accessible by personal access token"). Read CI for the head SHA with
+   `gh run list -R <repo> --commit <full sha> --json name,status,conclusion,databaseId`, then
+   `gh run view <id> -R <repo>` (jobs) and `--log-failed` (failing tests), plus
+   `gh api repos/<repo>/commits/<sha>/status` for status contexts such as Vercel. A 403 is not "CI unknown":
+   use these instead, and never ask the owner to confirm CI.
 3. Handle the events:
    - `registered`: read the handoff block, write the summary → `request_review` with all reviewers,
      summary = Intent + 1–2 "worth checking" points.
