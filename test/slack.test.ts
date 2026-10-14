@@ -5,6 +5,28 @@ const ctx = { botUserId: 'UBOT', botId: 'BBOT', reviewChannelId: 'CREVIEW' };
 const PARENT = '1758600000.000100';
 
 describe('routeEvent', () => {
+  it('strips the Claude integration footer, so an owner command sent through it still parses', () => {
+    const footer = '\n\n*Sent using* <@U0BD61435EK|Claude>';
+    const dm = (ts: string, text: string, thread_ts?: string): RawEvent => ({
+      type: 'message', channel: 'D0OWNER', channel_type: 'im', ts, thread_ts, user: 'UOWNER', text: text + footer,
+    });
+    expect(routeEvent(dm('3.0', 'set InsForge/instabox#135 rounds=6'), ctx)).toEqual([
+      {
+        kind: 'command',
+        cmd: { kind: 'set', pr: { repo: 'InsForge/instabox', number: 135 }, rounds: 6 },
+        msg: { channel: 'D0OWNER', ts: '3.0', user: 'UOWNER', text: 'set InsForge/instabox#135 rounds=6' },
+      },
+    ]);
+    expect(routeEvent(dm('3.1', 'status'), ctx).map((r) => r.kind === 'command' && r.cmd.kind)).toEqual(['status']);
+    // A DM-thread note reaches the agent without the footer.
+    expect(routeEvent(dm('3.2', 'merge main first', '3.0'), ctx)).toEqual([
+      { kind: 'thread_reply', msg: { channel: 'D0OWNER', ts: '3.2', threadTs: '3.0', user: 'UOWNER', text: 'merge main first' } },
+    ]);
+    // Only a trailing footer is removed; a mention mid-text is left alone.
+    const mid = routeEvent(dm('3.3', 'tell InsForge/instabox#135 ask <@U0BD61435EK|Claude> later'), ctx);
+    expect(mid[0]!.msg.text).toBe('tell InsForge/instabox#135 ask <@U0BD61435EK|Claude> later');
+  });
+
   it('bot reply in a review thread (user present) → thread_reply', () => {
     const ev: RawEvent = {
       type: 'message',
