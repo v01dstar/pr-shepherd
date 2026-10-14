@@ -28,6 +28,10 @@ export type RouteCtx = { botUserId: string; botId?: string; reviewChannelId: str
 
 export type Route = { kind: 'thread_reply'; msg: SlackMessage } | { kind: 'command'; cmd: Command; msg: SlackMessage };
 
+// Slack's Claude integration ends messages it sends on a user's behalf with "*Sent using* <@U…|Claude>".
+// It is not part of what the user said, and it would turn every command into an unknown one.
+const SENT_USING_FOOTER = /\s*_?\*?Sent using\*?_?\s*<@[A-Z0-9]+(?:\|[^>]*)?>\s*$/;
+
 // Subtypes that carry a real new message; edits, deletes, joins etc. are ignored.
 const MESSAGE_SUBTYPES = new Set([undefined, 'bot_message', 'thread_broadcast', 'file_share', 'me_message']);
 
@@ -38,6 +42,7 @@ export function normalize(ev: RawEvent): SlackMessage | null {
   if (!text.trim() && ev.attachments?.length) {
     text = ev.attachments.map((a) => [a.pretext, a.text ?? a.fallback].filter(Boolean).join('\n')).filter(Boolean).join('\n');
   }
+  text = text.replace(SENT_USING_FOOTER, '');
   const msg: SlackMessage = { channel: ev.channel, ts: ev.ts, text };
   if (ev.thread_ts && ev.thread_ts !== ev.ts) msg.threadTs = ev.thread_ts;
   const user = ev.user ?? ev.bot_profile?.user_id;
