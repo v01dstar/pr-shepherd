@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createActuator } from './actuator.js';
-import { loadConfig } from './config.js';
+import { agentOptions, loadConfig } from './config.js';
 import type { Command, Db, SlackMessage } from './contracts.js';
 import { createControl, type Control } from './control.js';
 import { checkAll, type CredentialStatus } from './credentials.js';
@@ -77,7 +77,7 @@ async function main() {
 
   let credentials: CredentialStatus | undefined;
   const recheck = async () => {
-    const checked = await checkAll(config.owner.github);
+    const checked = await checkAll(config.owner.github, agentOptions(config, 'shepherd').model);
     await remindExpiry(checked).catch((e) => log.error({ err: e }, 'expiry tracking failed'));
     credentials = checked;
     const failed = Object.entries(credentials).filter(([, v]) => !v.ok) as [keyof CredentialStatus, CredentialStatus[keyof CredentialStatus]][];
