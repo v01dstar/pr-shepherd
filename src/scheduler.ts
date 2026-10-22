@@ -20,7 +20,7 @@ export type SchedulerDeps = {
   store: Store & Partial<Pick<StoreExtras, 'unclaimEvents'>>;
   github: GithubPort;
   repos: Repos;
-  actuator: Actuator & { policyLine(pr: Pr): Promise<string> };
+  actuator: Actuator & { policyLine(pr: Pr): Promise<string>; closedOnGithub(pr: Pr, state: 'MERGED' | 'CLOSED'): Promise<void> };
   slack: SlackPort;
   dataDir: string;
   runAgent?: RunAgent;
@@ -234,6 +234,16 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
   // prMeta / git fetch can fail transiently; the events stay pending, so retry with backoff, then hand over.
   async function onStartFailure(prId: number, err: unknown) {
     const n = (startFailures.get(prId) ?? 0) + 1;
+    // An open PR whose head branch is gone will not come back by retrying.
+    const headGone = err instanceof Error && /couldn't find remote ref refs\/heads\//.test(err.message);
+    if (headGone) {
+      startFailures.delete(prId);
+      const pr = await store.getPr(prId);
+      if (!pr || pr.status !== 'active') return;
+      await store.updatePr(prId, { status: 'needs_human', reason: 'head_branch_missing' });
+      await notify(pr, `${pr.repo}#${pr.number} needs you: its head branch is gone from GitHub but the PR is still open. Restore the branch, or close or untrack the PR. ${prUrl(pr)}`);
+      return;
+    }
     if (n < MAX_RETRIES) {
       startFailures.set(prId, n);
       retryLater(backoff(n), async () => poke(prId));
@@ -261,6 +271,11 @@ export function createScheduler(deps: SchedulerDeps): SchedulerHandle {
 
     const prev = await store.lastRun(prId);
     const meta = await github.prMeta(pr);
+    // Merged or closed outside a run (e.g. merged by hand): its head branch may be gone, so don't fetch it.
+    if (meta.state === 'MERGED' || meta.state === 'CLOSED') {
+      await actuator.closedOnGithub(pr, meta.state);
+      return false;
+    }
     const cwd = await repos.ensureWorktree('shepherd', pr, meta.headRef);
     const run = await store.createRun({ prId, sessionId: pr.sessionId });
     await store.claimEvents(pending.map((e) => e.id), run.id);

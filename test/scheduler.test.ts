@@ -169,6 +169,9 @@ function setup(script: Script, cfg: Config = config) {
       apply: vi.fn(async (r: Run) => void applied.push(r)),
       onTimer: vi.fn(),
       policyLine: vi.fn(async (pr: Pr) => `[policy] auto_merge=on runs=${pr.runCount}/30`),
+      closedOnGithub: vi.fn(async (pr: Pr, state: 'MERGED' | 'CLOSED') => {
+        await store.updatePr(pr.id, { status: state === 'MERGED' ? 'merged' : 'closed' });
+      }),
     },
     slack: {
       dm: vi.fn(async (_u: string, t: string) => (dms.push(t), { channel: 'D-owner', ts: `${dms.length}.0` })),
@@ -768,6 +771,37 @@ describe('scheduler — review-fix regressions', () => {
     sched.poke(1);
     await waitFor(() => t.applied.length === 1);
     expect(prMeta).toHaveBeenCalledTimes(2);
+  });
+
+  it('a PR merged on GitHub outside a run is marked merged without fetching its (deleted) head branch', async () => {
+    // InsForge/InsForge#2151: merged by hand, head branch auto-deleted, then 5 runs failed on `git fetch`.
+    const t = setup(chatty());
+    const prMeta = vi.fn(async (ref: { repo: string; number: number }) => ({ ...ref, headRef: 'fix/gone', state: 'MERGED' }));
+    const sched = createScheduler({ ...t.deps, github: { prMeta, ghRead: vi.fn() } as never, retryBaseMs: 10 });
+    current = sched;
+    t.store.addPr({ id: 1 });
+    await t.store.addEvent({ prId: 1, kind: 'timer' });
+    sched.poke(1);
+    await waitFor(async () => (await t.store.getPr(1))?.status === 'merged');
+    expect(t.deps.actuator.closedOnGithub).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 'MERGED');
+    expect((t.deps.repos as unknown as { ensureWorktree: ReturnType<typeof vi.fn> }).ensureWorktree).not.toHaveBeenCalled();
+    expect(t.agent.calls).toHaveLength(0);
+  });
+
+  it('an open PR whose head branch is gone needs a human after one try, not five', async () => {
+    const t = setup(chatty());
+    const ensureWorktree = vi.fn(async () => {
+      throw new Error("git fetch --no-tags failed: fatal: couldn't find remote ref refs/heads/fix/gone");
+    });
+    const sched = createScheduler({ ...t.deps, repos: { ensureWorktree } as never, retryBaseMs: 10 });
+    current = sched;
+    t.store.addPr({ id: 1 });
+    await t.store.addEvent({ prId: 1, kind: 'timer' });
+    sched.poke(1);
+    await waitFor(async () => (await t.store.getPr(1))?.status === 'needs_human');
+    expect(ensureWorktree).toHaveBeenCalledTimes(1);
+    expect((await t.store.getPr(1))?.reason).toBe('head_branch_missing');
+    expect(t.dms.at(-1)).toContain('head branch is gone');
   });
 
   it('events steered into a run that dies before reading them go back to the inbox', async () => {

@@ -456,6 +456,15 @@ describe('wait / escalate / done', () => {
     expect((await store.getPr(other.id))!.status).toBe('needs_human');
   });
 
+  it('closedOnGithub: a PR merged outside a run is marked merged and its worktree cleaned', async () => {
+    const pr = await newPr();
+    await actuator.closedOnGithub(pr, 'MERGED');
+    const p = (await store.getPr(pr.id))!;
+    expect(p.status).toBe('merged');
+    expect(p.closedAt).toBeTruthy();
+    expect(cleaned).toHaveLength(1);
+  });
+
   it('runs for terminal PRs are just marked applied', async () => {
     const pr = await newPr();
     await store.updatePr(pr.id, { status: 'merged' });
