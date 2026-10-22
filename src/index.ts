@@ -18,7 +18,7 @@ import { log } from './log.js';
 import { createRepos } from './repos.js';
 import { scheduleReport } from './report.js';
 import { createScheduler } from './scheduler.js';
-import { createSlack } from './slack.js';
+import { createSlack, isSocketModeFailure } from './slack.js';
 import { createStore } from './store.js';
 
 const run = promisify(execFile);
@@ -131,7 +131,10 @@ async function main() {
     await pool.end();
     process.exit(0);
   };
-  process.on('unhandledRejection', (err) => log.error({ err }, 'unhandled rejection'));
+  process.on('unhandledRejection', (err) => {
+    log.error({ err }, 'unhandled rejection');
+    if (isSocketModeFailure(err) && !shuttingDown) void slack.reconnect();
+  });
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSlackPort, routeEvent, type RawEvent, type SlackApi } from '../src/slack.js';
+import { createSlackPort, isSocketModeFailure, restartUntilUp, routeEvent, type RawEvent, type SlackApi } from '../src/slack.js';
 
 const ctx = { botUserId: 'UBOT', botId: 'BBOT', reviewChannelId: 'CREVIEW' };
 const PARENT = '1758600000.000100';
@@ -266,5 +266,36 @@ describe('createSlackPort', () => {
     expect(await port.botUserIdOf('B1')).toBe('U0BOT');
     expect(await port.botUserIdOf('B1')).toBe('U0BOT');
     expect(api.bots.info).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Socket Mode recovery', () => {
+  it('recognizes a failed Socket Mode reconnect, and nothing else', () => {
+    const dead = new Error('An API error occurred: invalid_auth');
+    dead.stack = 'Error: An API error occurred: invalid_auth\n    at async SocketModeClient.retrieveWSSURL (/app/node_modules/@slack/socket-mode/dist/src/SocketModeClient.js:270:26)';
+    expect(isSocketModeFailure(dead)).toBe(true);
+    expect(isSocketModeFailure(new Error('graphql timeout'))).toBe(false);
+    expect(isSocketModeFailure('invalid_auth')).toBe(false);
+  });
+
+  it('restartUntilUp retries with backoff until the connection comes back', async () => {
+    let fails = 2;
+    const restart = vi.fn(async () => {
+      if (fails-- > 0) throw new Error('invalid_auth');
+    });
+    const waits: number[] = [];
+    const attempts = await restartUntilUp(restart, { baseMs: 10, maxMs: 15, sleep: async (ms) => void waits.push(ms) });
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([10, 15]);
+  });
+
+  it('restartUntilUp stops trying once the app is shutting down', async () => {
+    let stop = false;
+    const restart = vi.fn(async () => {
+      stop = true;
+      throw new Error('invalid_auth');
+    });
+    expect(await restartUntilUp(restart, { sleep: async () => undefined, stopped: () => stop })).toBe(1);
+    expect(restart).toHaveBeenCalledTimes(1);
   });
 });
