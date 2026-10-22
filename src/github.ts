@@ -342,10 +342,12 @@ export function createGithub(opts: {
 
     async openPrsWithHead(repo, branch) {
       const [owner, name] = checkRepo(repo);
+      // headRefName matches fork PRs too (a fork's `main` looks like our `main`); only same-repo heads stack.
       const q = `query($owner:String!,$name:String!,$head:String!){repository(owner:$owner,name:$name){
-        pullRequests(headRefName:$head,states:OPEN,first:10){nodes{number}}}}`;
-      const data = await graphql<{ repository: { pullRequests: { nodes: { number: number }[] } } | null }>(q, { owner, name, head: branch });
-      return data.repository?.pullRequests.nodes.map((n) => n.number) ?? [];
+        pullRequests(headRefName:$head,states:OPEN,first:100){nodes{number isCrossRepository}}}}`;
+      type Node = { number: number; isCrossRepository: boolean };
+      const data = await graphql<{ repository: { pullRequests: { nodes: Node[] } } | null }>(q, { owner, name, head: branch });
+      return data.repository?.pullRequests.nodes.filter((n) => !n.isCrossRepository).map((n) => n.number) ?? [];
     },
 
     async postReview(ref: PrRef, review: GithubReview) {

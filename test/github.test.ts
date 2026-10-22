@@ -212,10 +212,13 @@ describe('merge / postReview / comment / login', () => {
     expect(await stuck.merge(ref, 'abc', 's', 'b', branches)).toEqual({ ok: false, error: 'merge-async: still pending after 3m (request u)' });
   });
 
-  it('openPrsWithHead: open PR numbers whose head is the branch', async () => {
-    const { exec, calls } = fakeExec(() => JSON.stringify({ data: { repository: { pullRequests: { nodes: [{ number: 75 }] } } } }));
+  it('openPrsWithHead: open same-repo PR numbers whose head is the branch; fork PRs with that branch name are not a stack', async () => {
+    // InsForge/InsForge#2151 (base main) was refused as "stacked on #1302, #2009, #2050": fork PRs whose head is also named main.
+    const nodes = [{ number: 75, isCrossRepository: false }, { number: 1302, isCrossRepository: true }, { number: 2009, isCrossRepository: true }];
+    const { exec, calls } = fakeExec(() => JSON.stringify({ data: { repository: { pullRequests: { nodes } } } }));
     const gh = createGithub({ config, exec });
     expect(await gh.openPrsWithHead('o/r', 'feat-a')).toEqual([75]);
+    expect(calls[0]!.args.join(' ')).toContain('isCrossRepository');
     expect(calls[0]!.args).toContain('head=feat-a');
   });
 

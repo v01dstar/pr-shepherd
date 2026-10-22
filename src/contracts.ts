@@ -225,7 +225,7 @@ export interface GithubPort {
   // Async merge API (works for stacked PRs too), squash, locked to `sha`. Once merged, open PRs based on `head` are
   // retargeted to `base`, and `head` is deleted only if all of them were (deleting a base closes its PRs).
   merge(ref: PrRef, sha: string, subject: string, body: string, branches: { head: string; base: string }): Promise<MergeResult>;
-  openPrsWithHead(repo: string, branch: string): Promise<number[]>; // open PRs whose head is `branch` (stack check)
+  openPrsWithHead(repo: string, branch: string): Promise<number[]>; // open same-repo PRs whose head is `branch` (stack check; forks excluded)
   postReview(ref: PrRef, review: GithubReview): Promise<{ url: string }>;
   comment(ref: PrRef, body: string): Promise<void>;
   ghRead(args: string[]): Promise<string>; // read-only allowlist proxy for G3 (DESIGN §7.2)

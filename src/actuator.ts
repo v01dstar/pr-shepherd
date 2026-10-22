@@ -49,6 +49,7 @@ export type ActuatorHandle = Actuator & {
   // Owner's `merge <pr>`: executes the stored pendingMerge (DESIGN §5.5 merge row). skipCleanup when a run is live
   // on the PR: its worktree must not vanish under it; the janitor cleans the merged PR later (DESIGN §5.8).
   releaseMerge(pr: Pr, opts?: { skipCleanup?: boolean }): Promise<{ ok: true; queued?: boolean } | { ok: false; error: string }>;
+  closedOnGithub(pr: Pr, state: 'MERGED' | 'CLOSED'): Promise<void>;
 };
 
 export function createActuator(deps: Deps): ActuatorHandle {
@@ -381,6 +382,12 @@ export function createActuator(deps: Deps): ActuatorHandle {
       if (merged) return { ok: true, ...(merged === 'queued' ? { queued: true } : {}) };
       await store.updatePr(pr.id, { pendingMerge: null });
       return { ok: false, error: 'merge failed; the agent was told (merge_failed)' };
+    },
+
+    // The PR was merged or closed on GitHub (by hand, or by someone else) before a run started: record it and stop.
+    async closedOnGithub(pr, state) {
+      log.info({ pr: prName(pr), state }, 'PR already closed on GitHub; not starting a run');
+      await terminal(pr, state === 'MERGED' ? 'merged' : 'closed');
     },
 
     async policyLine(pr) {
