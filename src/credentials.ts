@@ -55,29 +55,30 @@ export async function checkSlack(token = process.env.SLACK_BOT_TOKEN): Promise<C
   }
 }
 
-// One tiny Haiku call; proves CLAUDE_CODE_OAUTH_TOKEN works headless.
-export async function checkClaude(timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
+// One tiny call on the model the runs use; proves CLAUDE_CODE_OAUTH_TOKEN works headless and that the
+// configured model still answers (a retired model shows up here, not as failed runs). Unset = Claude Code default.
+export async function checkClaude(model?: string, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), timeoutMs);
   try {
     for await (const m of query({
       prompt: 'Reply with exactly: OK',
-      options: { model: 'claude-haiku-4-5-20251001', maxTurns: 1, tools: [], settingSources: [], persistSession: false, abortController },
+      options: { ...(model && { model }), maxTurns: 1, tools: [], settingSources: [], persistSession: false, abortController },
     })) {
       if (m.type === 'result') {
-        return { ok: m.subtype === 'success', detail: `result=${m.subtype}`, checkedAt: now() };
+        return { ok: m.subtype === 'success', detail: `${model ?? 'default model'}: result=${m.subtype}`, checkedAt: now() };
       }
     }
     return { ok: false, detail: 'no result message', checkedAt: now() };
   } catch (e) {
     const detail = abortController.signal.aborted ? `timed out after ${timeoutMs / 1000}s` : (e as Error).message;
-    return { ok: false, detail: `claude check failed: ${detail}`, checkedAt: now() };
+    return { ok: false, detail: `claude check failed (${model ?? 'default model'}): ${detail}`, checkedAt: now() };
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function checkAll(ownerGithub: string): Promise<CredentialStatus> {
-  const [github, slack, claude] = await Promise.all([checkGithub(ownerGithub), checkSlack(), checkClaude()]);
+export async function checkAll(ownerGithub: string, claudeModel?: string): Promise<CredentialStatus> {
+  const [github, slack, claude] = await Promise.all([checkGithub(ownerGithub), checkSlack(), checkClaude(claudeModel)]);
   return { github, slack, claude };
 }
