@@ -182,18 +182,47 @@ export function createSlackPort(api: SlackApi): SlackPort & { botUserIdOf(botId:
 
 // ---------- app ----------
 
+// Socket Mode reconnects by itself, but when a reconnect fails (one `invalid_auth` from apps.connections.open
+// on 2026-10-22) the client rejects internally and stays dead while the process keeps running.
+export function isSocketModeFailure(err: unknown): boolean {
+  return err instanceof Error && /SocketModeClient/.test(err.stack ?? '');
+}
+
+// Runs `restart` until it succeeds, backing off from baseMs to maxMs. Returns the attempts made (0 if stopped).
+export async function restartUntilUp(
+  restart: () => Promise<void>,
+  opts: { sleep?: (ms: number) => Promise<void>; baseMs?: number; maxMs?: number; stopped?: () => boolean } = {},
+): Promise<number> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const maxMs = opts.maxMs ?? 5 * 60_000;
+  let delay = opts.baseMs ?? 5_000;
+  for (let attempt = 1; ; attempt++) {
+    if (opts.stopped?.()) return attempt - 1;
+    try {
+      await restart();
+      return attempt;
+    } catch (err) {
+      log.warn({ err, attempt, retryInMs: delay }, 'slack reconnect failed');
+      await sleep(delay);
+      delay = Math.min(delay * 2, maxMs);
+    }
+  }
+}
+
 export async function createSlack(opts: {
   config: Config;
   botToken: string;
   appToken: string;
   handlers: SlackHandlers;
-}): Promise<SlackPort & { start(): Promise<void>; stop(): Promise<void>; botUserId: string }> {
+}): Promise<SlackPort & { start(): Promise<void>; stop(): Promise<void>; reconnect(): Promise<void>; botUserId: string }> {
   const app = new App({ token: opts.botToken, appToken: opts.appToken, socketMode: true });
   const auth = await app.client.auth.test();
   if (!auth.user_id) throw new Error('Slack auth.test returned no user_id');
   const botUserId = auth.user_id;
   const port = createSlackPort(app.client as unknown as SlackApi);
   let ctx: RouteCtx | null = null;
+  let stopped = false;
+  let reconnecting: Promise<void> | null = null;
 
   // The same mention arrives as both `message` and `app_mention`; handle each command once.
   const seen = new Set<string>();
@@ -235,7 +264,22 @@ export async function createSlack(opts: {
       await app.start();
       log.info({ botUserId, reviewChannelId }, 'slack connected');
     },
+    // Restart the Socket Mode connection after it died; concurrent calls share one attempt loop.
+    reconnect() {
+      if (stopped) return Promise.resolve();
+      reconnecting ??= restartUntilUp(
+        async () => {
+          await app.stop().catch(() => undefined);
+          await app.start();
+        },
+        { stopped: () => stopped },
+      )
+        .then((attempts) => void (attempts && log.info({ attempts }, 'slack reconnected')))
+        .finally(() => (reconnecting = null));
+      return reconnecting;
+    },
     async stop() {
+      stopped = true;
       await app.stop();
     },
   };
