@@ -326,7 +326,7 @@ session: <local session ID, optional>
    - Changes made or conflicts resolved in this run → `request_review`, reviewers = bots whose reviews were handled in this run (all of them when conflicts were resolved);
    - Every reviewer's latest review approves, no unresolved threads, CI green → `request_approve`;
    - Approved, no new push since approval, required checks green, `CLEAN` → `merge`;
-   - Waiting for CI or other reviewers → `wait` (≤ 30 minutes; a reviewer reply wakes it early);
+   - Waiting for CI → `wait` 3 minutes; waiting for other reviewers → `wait` (≤ 30 minutes; a reviewer reply wakes it early);
    - Needs the owner → `escalate`.
 5. Update notes and emit structured output.
 
