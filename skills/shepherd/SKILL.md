@@ -99,7 +99,7 @@ Read it first on every run, update it last.
      no unresolved threads, CI green → `request_approve` (asks every configured approver; pass
      `approvers: [...]` only to ask a subset, e.g. to re-ask one that stalled).
    - Approved, no push since the approval, required checks green, `CLEAN` → `merge`.
-   - Waiting on CI or on another reviewer → `wait` (≤ 30 min; reviewer replies wake you early).
+   - Waiting on CI → `wait` 3 min. Waiting on another reviewer → `wait` (≤ 30 min; reviewer replies wake you early).
    - Anything needing the owner → `escalate` with a precise reason.
    - PR already closed/merged elsewhere → `done`.
 5. Update the notes, then return the structured output.
