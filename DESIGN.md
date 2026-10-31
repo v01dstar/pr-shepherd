@@ -412,6 +412,8 @@ curl -fsS --max-time 15 -X POST "$PR_SHEPHERD_URL/prs" \
 - Registration failure: keep the PR, say clearly that it is "not registered" and why; the fix is to rerun or `@<bot> track <PR>`.
 - Running pr-shepherd-ship again on a registered PR triggers `updated`.
 
+A second local skill, `pr-shepherd-slack`, lets the agent send the §9 commands as the owner through its Slack connection (a DM to `PR_SHEPHERD_SLACK_BOT`), only when the owner asks, and confirming `merge`, `untrack`, `pause all` and `auto_merge=on` first.
+
 ## 9. Slack commands
 
 `<pr>` is a link or `owner/repo#N`. Owner-only commands also work in DMs. The bot adds `:eyes:` on receiving a command.
@@ -573,7 +575,7 @@ insta template deploy https://github.com/v01dstar/pr-shepherd \
 ```
 pr-shepherd/
 ├── DESIGN.md  README.md  LICENSE  config.example.yaml  deploy.env.example  Dockerfile  slack-manifest.yaml  insta.template.yaml
-├── .claude-plugin/plugin.json   skills/{shepherd,review}/SKILL.md   local-skills/{pr-shepherd-ship/{SKILL.md,guard.sh},pr-shepherd-setup/SKILL.md}
+├── .claude-plugin/plugin.json   skills/{shepherd,review}/SKILL.md   local-skills/{pr-shepherd-ship/{SKILL.md,guard.sh},pr-shepherd-slack/SKILL.md,pr-shepherd-setup/SKILL.md}
 ├── .github/workflows/{ci,release}.yml
 ├── migrations/   test/fixtures/slack/
 ├── scripts/
@@ -582,7 +584,7 @@ pr-shepherd/
 │   ├── update-secret.sh               # push changed credentials / config to the deployment (§11.1)
 │   ├── release.sh                     # version bump + tag → release workflow (§11)
 │   ├── slack-manifest.sh              # Slack manifest for this deployment (+ prefilled create link)
-│   ├── install-local.sh               # local ship skill, config, Claude Code hook, Codex rule (§8)
+│   ├── install-local.sh               # local skills, config, Claude Code hook, Codex rule (§8)
 │   ├── deployment-url.sh              # the linked deployment's URL (deploy.sh, install-local.sh)
 │   └── docker-entrypoint.sh  fake-reviewer.ts
 └── src/

@@ -153,8 +153,10 @@ scripts/install-local.sh --url https://<your-deployment> --org your-org
 In the deploying checkout, `scripts/install-local.sh` with no arguments finds both (the linked deployment
 and `config.yaml`); run it again after the URL changes.
 
-This symlinks `pr-shepherd-ship` into `~/.claude/skills` and `~/.codex/skills` and writes
-`~/.config/pr-shepherd/config` (`PR_SHEPHERD_URL=…`, `PR_SHEPHERD_ORG=…`). It also adds a Claude Code
+This symlinks `pr-shepherd-ship` and `pr-shepherd-slack` into `~/.claude/skills` and `~/.codex/skills` and
+writes `~/.config/pr-shepherd/config` (`PR_SHEPHERD_URL=…`, `PR_SHEPHERD_ORG=…`, `PR_SHEPHERD_SLACK_BOT=…`).
+The bot's Slack user id comes from `SLACK_BOT_TOKEN` in `deploy.env`; on other machines pass
+`--slack-bot <id>` (the bot's profile → Copy member ID). It also adds a Claude Code
 `PreToolUse` hook (`guard.sh`) that denies a plain `gh pr create` in the org's repos and points the agent
 at the skill, and a matching rule block in `~/.codex/AGENTS.md`. It is idempotent. `--uninstall` removes
 everything it added.
@@ -354,6 +356,7 @@ skills/           server-side skills, loaded as the local plugin `pr-shepherd`
   review/           pr-shepherd:review, review someone else's PR
 local-skills/
   pr-shepherd-ship/ local skill: open a PR and register it (+ guard.sh hook)
+  pr-shepherd-slack/ local skill: send the bot's Slack commands as the owner (status, tell, set, merge, …)
 migrations/       forward-only SQL
 scripts/          deploy.sh deployment-url.sh update-secret.sh release.sh slack-manifest.sh install-local.sh docker-entrypoint.sh fake-reviewer.ts
 .github/workflows/ ci.yml, release.yml

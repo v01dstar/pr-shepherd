@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Install the pr-shepherd-ship local skill for Claude Code and Codex (DESIGN §8). Idempotent; re-run to update.
-#   - symlinks local-skills/pr-shepherd-ship into ~/.claude/skills and ~/.codex/skills
-#   - writes ~/.config/pr-shepherd/config (PR_SHEPHERD_URL, PR_SHEPHERD_ORG)
+# Install the pr-shepherd local skills for Claude Code and Codex (DESIGN §8). Idempotent; re-run to update.
+#   - symlinks local-skills/pr-shepherd-ship and pr-shepherd-slack into ~/.claude/skills and ~/.codex/skills
+#   - writes ~/.config/pr-shepherd/config (PR_SHEPHERD_URL, PR_SHEPHERD_ORG, PR_SHEPHERD_SLACK_BOT)
 #   - Claude Code: a PreToolUse(Bash) hook running guard.sh, so PRs in the org always go through the skill
 #   - Codex: the same rule as a managed block in ~/.codex/AGENTS.md
-# Usage: scripts/install-local.sh [--url https://<your-bot>] [--org <github-org>]
+# Usage: scripts/install-local.sh [--url https://<your-bot>] [--org <github-org>] [--slack-bot <bot user id>]
 #        scripts/install-local.sh --uninstall
-# scripts/deploy.sh runs it for you. Without --url / --org it uses, in order: the deployment this checkout is
-# linked to (scripts/deployment-url.sh) and the org in config.yaml, then the values already installed.
+# scripts/deploy.sh runs it for you. Without --url / --org / --slack-bot it uses, in order: the deployment this
+# checkout is linked to (scripts/deployment-url.sh), the org in config.yaml and the bot user behind
+# SLACK_BOT_TOKEN in deploy.env, then the values already installed.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-SKILL="$REPO/local-skills/pr-shepherd-ship"
+SKILLS=(pr-shepherd-ship pr-shepherd-slack)
 CONF_DIR="$HOME/.config/pr-shepherd"
 CONF="$CONF_DIR/config"
 SETTINGS="$HOME/.claude/settings.json"
@@ -20,13 +21,14 @@ HOOK_CMD='"$HOME/.claude/skills/pr-shepherd-ship/guard.sh"'
 BEGIN='<!-- pr-shepherd:begin -->'
 END='<!-- pr-shepherd:end -->'
 
-URL="" ORG="" UNINSTALL=0
+URL="" ORG="" SLACK_BOT="" UNINSTALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --url) URL="${2:?--url needs a value}"; shift 2 ;;
     --org) ORG="${2:?--org needs a value}"; shift 2 ;;
+    --slack-bot) SLACK_BOT="${2:?--slack-bot needs a value}"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -37,11 +39,18 @@ if [[ $UNINSTALL -eq 0 ]]; then
   if [[ -z "$ORG" && -s "$REPO/config.yaml" ]] && command -v node >/dev/null; then
     ORG=$(cd "$REPO" && node -e 'process.stdout.write(String(require("yaml").parse(require("fs").readFileSync("config.yaml", "utf8"))?.org ?? ""))' 2>/dev/null || true)
   fi
+  # The bot's Slack user id, for pr-shepherd-slack. The token goes to curl on stdin, never on the command line.
+  tok=$(sed -n 's/^SLACK_BOT_TOKEN=//p' "$REPO/deploy.env" 2>/dev/null | head -1 | tr -d "\"'")
+  if [[ -z "$SLACK_BOT" && -n "$tok" ]]; then
+    SLACK_BOT=$(printf 'Authorization: Bearer %s\n' "$tok" | curl -fsS -m 10 -H @- https://slack.com/api/auth.test 2>/dev/null | jq -r '.user_id // empty' || true)
+  fi
+  unset tok
 fi
 # Existing values survive a partial re-run (e.g. only --url).
 if [[ -f "$CONF" ]]; then
   [[ -n "$URL" ]] || URL=$(sed -n 's/^PR_SHEPHERD_URL=//p' "$CONF")
   [[ -n "$ORG" ]] || ORG=$(sed -n 's/^PR_SHEPHERD_ORG=//p' "$CONF")
+  [[ -n "$SLACK_BOT" ]] || SLACK_BOT=$(sed -n 's/^PR_SHEPHERD_SLACK_BOT=//p' "$CONF")
 fi
 if [[ $UNINSTALL -eq 0 && ( -z "$URL" || -z "$ORG" ) ]]; then
   echo "usage: $0 --url https://<your-bot> --org <github-org>" >&2; exit 2
@@ -53,15 +62,19 @@ step "skill links"
 for tool in "$HOME/.claude" "$HOME/.codex"; do
   [[ -d "$tool" ]] || continue
   mkdir -p "$tool/skills"
-  [[ -L "$tool/skills/pr-shepherd-ship" ]] && rm "$tool/skills/pr-shepherd-ship"
-  if [[ $UNINSTALL -eq 0 ]]; then ln -s "$SKILL" "$tool/skills/pr-shepherd-ship"; echo "  $tool/skills/pr-shepherd-ship"; fi
+  for s in "${SKILLS[@]}"; do
+    [[ -L "$tool/skills/$s" ]] && rm "$tool/skills/$s"
+    if [[ $UNINSTALL -eq 0 ]]; then ln -s "$REPO/local-skills/$s" "$tool/skills/$s"; echo "  $tool/skills/$s"; fi
+  done
 done
 
 step "config"
 if [[ $UNINSTALL -eq 0 ]]; then
   mkdir -p "$CONF_DIR"
   printf 'PR_SHEPHERD_URL=%s\nPR_SHEPHERD_ORG=%s\n' "${URL%/}" "$ORG" > "$CONF"
+  [[ -n "$SLACK_BOT" ]] && printf 'PR_SHEPHERD_SLACK_BOT=%s\n' "$SLACK_BOT" >> "$CONF"
   echo "  $CONF"
+  [[ -n "$SLACK_BOT" ]] || echo "  (no PR_SHEPHERD_SLACK_BOT: pass --slack-bot <bot user id> so pr-shepherd-slack can find the bot)"
 else
   rm -f "$CONF"
 fi
@@ -100,6 +113,8 @@ if [[ -d "$HOME/.codex" ]]; then
       echo "- Opening a pull request in any $ORG/* GitHub repository: always use the \`pr-shepherd-ship\` skill (it writes"
       echo "  the handoff block and registers the PR with pr-shepherd). Never run a plain \`gh pr create\` there; the skill"
       echo "  runs \`PR_SHEPHERD_SHIP=1 gh pr create\`."
+      echo "- Checking or steering what pr-shepherd does with the owner's PRs (status, tell, set, merge, pause): use the"
+      echo "  \`pr-shepherd-slack\` skill."
       echo "$END"
     } > "$AGENTS"
   else
@@ -109,7 +124,7 @@ if [[ -d "$HOME/.codex" ]]; then
 fi
 
 if [[ $UNINSTALL -eq 0 ]]; then
-  echo "Done. Restart Claude Code / Codex to load the skill. PRs in $ORG/* now go through pr-shepherd-ship."
+  echo "Done. Restart Claude Code / Codex to load the skills. PRs in $ORG/* now go through pr-shepherd-ship."
 else
   echo "Uninstalled."
 fi
