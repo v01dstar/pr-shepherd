@@ -61,17 +61,19 @@ If none is set, **stop and ask the owner** for the URL. Do not skip registration
 ```bash
 PR_SHEPHERD_URL="${PR_SHEPHERD_URL:-$(sed -n 's/^PR_SHEPHERD_URL=//p' ~/.config/pr-shepherd/config 2>/dev/null | head -1)}"
 PR_SHEPHERD_URL="${PR_SHEPHERD_URL%/}"
+PR_SHEPHERD_TOKEN="${PR_SHEPHERD_TOKEN:-$(sed -n 's/^PR_SHEPHERD_TOKEN=//p' ~/.config/pr-shepherd/config 2>/dev/null | head -1)}"
 curl -fsS --max-time 15 -X POST "$PR_SHEPHERD_URL/prs" \
-  -H "Authorization: Bearer $(gh auth token)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${PR_SHEPHERD_TOKEN:-$(gh auth token)}" -H "Content-Type: application/json" \
   -d '{"url":"<PR URL>"}'
 ```
 
-Never print, log or save the token; always pass it inline via `$(gh auth token)` as above.
+Never print, log or save the token; always pass it inline as above. `PR_SHEPHERD_TOKEN` is a token that can only
+register PRs; `gh auth token` is the fallback for bots deployed without one.
 
 | Response | Meaning |
 |---|---|
 | 202 | registered (or already registered → the bot re-checks the new commits) |
-| 401 | the gh token is not the owner's account (`gh auth status`) |
+| 401 | `PR_SHEPHERD_TOKEN` is wrong (ask the owner for the right one), or without one the gh token is not the owner's account (`gh auth status`) |
 | 403 | repo not in the org / excluded, or the PR author is not the owner |
 | 409 | PR is draft, merged or closed (`gh pr ready` for drafts, then retry) |
 | timeout / 5xx | bot down or deploying |

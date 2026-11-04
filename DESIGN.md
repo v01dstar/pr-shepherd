@@ -120,11 +120,12 @@ Every message ends with a `[policy]` line so the agent knows the current policy 
 
 ```
 POST <PR_SHEPHERD_URL>/prs
-Authorization: Bearer <local gh auth token>
+Authorization: Bearer <PR_SHEPHERD_TOKEN, or the local gh auth token>
 { "url": "https://github.com/example-org/example-cli/pull/271" }
 ```
 
-- Authentication: call GitHub `GET /user` once with the token; allow only if the login equals `config.owner.github`. The token is never written to disk or logged; the result is cached by hash for 1 hour.
+- Authentication with a registration token: when `PR_SHEPHERD_REGISTER_TOKEN_SHA256` is set, the token's hash must match it and GitHub tokens are refused, so the owner's GitHub token never reaches the host. The token can only register PRs.
+- Authentication without one: call GitHub `GET /user` once with the token; allow only if the login equals `config.owner.github`. The token is never written to disk or logged; the result is cached by hash for 1 hour.
 - Checks (one `gh api` call): the repository belongs to `config.org` and is not in `excludeRepos`; the PR is open; the author is the owner; it is not a draft.
 - Responses: `202` (registered, or already exists → `updated`), `401`, `403` (wrong repository or author), `409` (draft / merged / closed).
 - HTTPS only.
@@ -571,6 +572,8 @@ insta template deploy https://github.com/v01dstar/pr-shepherd \
 - Expiry warnings before a token dies (table `credential_expiry`): the GitHub PAT's expiry comes from the `github-authentication-token-expiration` response header; the Claude token has no expiry API, so its one-year life is counted from the first time the deployment saw it (a new token resets the count). The owner gets a DM at 30, 14, 7, 3 and 1 days left — each threshold once per token — with the rotate command. `/healthz` shows each `expiresAt`, and the daily report lists tokens expiring within 30 days. Slack tokens do not expire (token rotation is off in the manifest), so they are only covered by the failure check.
 
 ## 12. Layout and milestones
+
+Deployment on instabox: `scripts/deploy-instabox.sh` runs the bot on a box that never pauses, as a systemd service (`scripts/instabox-run.sh`) rather than in the image. GitHub, Slack and Claude tokens are org Secrets limited to their hosts: the box holds placeholders and the outbound proxy swaps in the values, so the bot and its agents cannot read them. Postgres runs on the box, on `/data/pg`, over a Unix socket only.
 
 ```
 pr-shepherd/

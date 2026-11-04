@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -44,6 +45,36 @@ afterEach(() => new Promise<void>((r) => server.close(() => r())));
 
 const post = (body: string, token?: string) =>
   fetch(`${base}/prs`, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body });
+
+describe('POST /prs with a registration token', () => {
+  const body = JSON.stringify({ url: 'https://github.com/your-org/example-cli/pull/271' });
+  let tokenServer: Server;
+  let url: string;
+
+  beforeEach(async () => {
+    tokenServer = createHttp({
+      dataDir: '.',
+      db: { query: async () => ({ rows: [] }) },
+      credentials: () => creds,
+      github: { verifyOwnerToken: async () => true },
+      registerTokenSha256: createHash('sha256').update('register-me').digest('hex'),
+      register: async () => result,
+    });
+    await new Promise<void>((r) => tokenServer.listen(0, '127.0.0.1', r));
+    url = `http://127.0.0.1:${(tokenServer.address() as AddressInfo).port}/prs`;
+  });
+  afterEach(() => new Promise<void>((r) => tokenServer.close(() => r())));
+
+  const send = (token: string) => fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body });
+
+  it('accepts that token', async () => {
+    expect((await send('register-me')).status).toBe(202);
+  });
+
+  it('no longer accepts an owner GitHub token', async () => {
+    expect((await send('good')).status).toBe(401);
+  });
+});
 
 describe('POST /prs', () => {
   const body = JSON.stringify({ url: 'https://github.com/your-org/example-cli/pull/271' });
