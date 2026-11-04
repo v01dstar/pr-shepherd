@@ -21,14 +21,18 @@ const CHECK_TIMEOUT_MS = 30_000;
 
 // GH_TOKEN must be a fine-grained PAT (DESIGN §4): only fine-grained tokens can be limited to the org
 // and denied the Workflows permission. Classic/OAuth tokens (ghp_, gho_) fail the check.
+// On instabox the env holds a Secret placeholder (ibsec_…), so the prefix says nothing; GitHub only sends
+// x-oauth-scopes for classic and OAuth tokens, which tells them apart.
 export async function checkGithub(expectedLogin: string, token = process.env.GH_TOKEN): Promise<CheckResult> {
-  if (!token?.startsWith('github_pat_')) {
+  const placeholder = !!token?.startsWith('ibsec_');
+  if (!token?.startsWith('github_pat_') && !placeholder) {
     return { ok: false, detail: 'GH_TOKEN is not a fine-grained PAT (github_pat_…)', checkedAt: now() };
   }
   try {
     const { stdout } = await run('gh', ['api', '-i', 'user'], { timeout: 15_000 });
     const scopes = /^x-oauth-scopes:\s*(.*)$/im.exec(stdout)?.[1]?.trim() ?? '';
     const login = /"login"\s*:\s*"([^"]+)"/.exec(stdout)?.[1];
+    if (placeholder && /^x-oauth-scopes:/im.test(stdout)) return { ok: false, detail: 'GH_TOKEN is not a fine-grained PAT (github_pat_…)', checkedAt: now() };
     if (login !== expectedLogin) return { ok: false, detail: `login is ${login ?? 'unknown'}, expected ${expectedLogin}`, checkedAt: now() };
     if (scopes.split(/,\s*/).includes('workflow')) return { ok: false, detail: 'token has workflow scope', checkedAt: now() };
     const githubExpiry = /^github-authentication-token-expiration:\s*(.*)$/im.exec(stdout)?.[1]?.trim();

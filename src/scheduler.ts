@@ -39,7 +39,8 @@ const SHUTDOWN_WAIT_MS = 30_000;
 const LIMIT_TEXT = /usage limit|rate[ _-]?limit|limit reached|quota|out of (?:extra )?usage/i;
 // Only these reach the G3 subprocess: it runs other people's code (DESIGN §7.2, §13.3).
 // Claude auth is either the subscription token or an API key (DESIGN §4); nothing else reaches review sessions.
-const REVIEW_ENV_ALLOW = ['PATH', 'HOME', 'LANG', 'TERM', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
+// The CA variables let the agent trust instabox's outbound proxy; they are paths, not credentials.
+const REVIEW_ENV_ALLOW = ['PATH', 'HOME', 'LANG', 'TERM', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'] as const;
 // The shepherd needs gh/git/Claude credentials, never the service's own Slack or database secrets.
 const SHEPHERD_ENV_DENY = /^(?:SLACK_|DATABASE_URL$|PG)/;
 const MAX_RETRIES = 5;
