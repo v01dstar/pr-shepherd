@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Install the pr-shepherd local skills for Claude Code and Codex (DESIGN §8). Idempotent; re-run to update.
 #   - symlinks local-skills/pr-shepherd-ship and pr-shepherd-slack into ~/.claude/skills and ~/.codex/skills
-#   - writes ~/.config/pr-shepherd/config (PR_SHEPHERD_URL, PR_SHEPHERD_ORG, PR_SHEPHERD_SLACK_BOT)
+#   - writes ~/.config/pr-shepherd/config (PR_SHEPHERD_URL, PR_SHEPHERD_ORG, PR_SHEPHERD_SLACK_BOT, PR_SHEPHERD_TOKEN)
 #   - Claude Code: a PreToolUse(Bash) hook running guard.sh, so PRs in the org always go through the skill
 #   - Codex: the same rule as a managed block in ~/.codex/AGENTS.md
 # Usage: scripts/install-local.sh [--url https://<your-bot>] [--org <github-org>] [--slack-bot <bot user id>]
 #        scripts/install-local.sh --uninstall
 # scripts/deploy.sh runs it for you. Without --url / --org / --slack-bot it uses, in order: the deployment this
 # checkout is linked to (scripts/deployment-url.sh), the org in config.yaml and the bot user behind
-# SLACK_BOT_TOKEN in deploy.env, then the values already installed.
+# SLACK_BOT_TOKEN in deploy.env, then the values already installed. The registration token comes from the
+# PR_SHEPHERD_TOKEN environment variable (keeps it out of the shell history), else the value already installed.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -21,14 +22,14 @@ HOOK_CMD='"$HOME/.claude/skills/pr-shepherd-ship/guard.sh"'
 BEGIN='<!-- pr-shepherd:begin -->'
 END='<!-- pr-shepherd:end -->'
 
-URL="" ORG="" SLACK_BOT="" UNINSTALL=0
+URL="" ORG="" SLACK_BOT="" TOKEN="${PR_SHEPHERD_TOKEN:-}" UNINSTALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --url) URL="${2:?--url needs a value}"; shift 2 ;;
     --org) ORG="${2:?--org needs a value}"; shift 2 ;;
     --slack-bot) SLACK_BOT="${2:?--slack-bot needs a value}"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -51,6 +52,7 @@ if [[ -f "$CONF" ]]; then
   [[ -n "$URL" ]] || URL=$(sed -n 's/^PR_SHEPHERD_URL=//p' "$CONF")
   [[ -n "$ORG" ]] || ORG=$(sed -n 's/^PR_SHEPHERD_ORG=//p' "$CONF")
   [[ -n "$SLACK_BOT" ]] || SLACK_BOT=$(sed -n 's/^PR_SHEPHERD_SLACK_BOT=//p' "$CONF")
+  [[ -n "$TOKEN" ]] || TOKEN=$(sed -n 's/^PR_SHEPHERD_TOKEN=//p' "$CONF")
 fi
 if [[ $UNINSTALL -eq 0 && ( -z "$URL" || -z "$ORG" ) ]]; then
   echo "usage: $0 --url https://<your-bot> --org <github-org>" >&2; exit 2
@@ -71,8 +73,10 @@ done
 step "config"
 if [[ $UNINSTALL -eq 0 ]]; then
   mkdir -p "$CONF_DIR"
+  (umask 077; : > "$CONF")
   printf 'PR_SHEPHERD_URL=%s\nPR_SHEPHERD_ORG=%s\n' "${URL%/}" "$ORG" > "$CONF"
   [[ -n "$SLACK_BOT" ]] && printf 'PR_SHEPHERD_SLACK_BOT=%s\n' "$SLACK_BOT" >> "$CONF"
+  [[ -n "$TOKEN" ]] && printf 'PR_SHEPHERD_TOKEN=%s\n' "$TOKEN" >> "$CONF"
   echo "  $CONF"
   [[ -n "$SLACK_BOT" ]] || echo "  (no PR_SHEPHERD_SLACK_BOT: pass --slack-bot <bot user id> so pr-shepherd-slack can find the bot)"
 else

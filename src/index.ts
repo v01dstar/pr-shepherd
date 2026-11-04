@@ -108,7 +108,7 @@ async function main() {
   const credTimer = setInterval(() => void recheck(), CREDENTIAL_RECHECK_MS);
 
   const port = Number(process.env.PORT ?? 8080);
-  const server = startHttp(port, { dataDir, db, credentials: () => credentials, github, register: (ref) => ctl.register(ref) });
+  const server = startHttp(port, { dataDir, db, credentials: () => credentials, github, registerTokenSha256: process.env.PR_SHEPHERD_REGISTER_TOKEN_SHA256, register: (ref) => ctl.register(ref) });
   await slack.start();
   await control.recover(inbox);
   const stopTimers = control.startTimers();

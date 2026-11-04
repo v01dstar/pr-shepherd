@@ -293,6 +293,26 @@ checkout (add `--branch <name>` if you deployed to a branch).
   merges or closes, and a sweep catches PRs merged elsewhere. Migrations are forward-only, so rolling back
   the image never requires rolling back the database.
 
+## Operations on instabox
+
+The bot can run on an instabox box instead. Its GitHub, Slack and Claude tokens are org Secrets: the box only
+holds placeholders, and the outbound proxy swaps in the real values for their allowed hosts. The box needs a
+paid plan, because a free box pauses when idle and after 480 minutes.
+
+The commands to create the box and its Secrets are at the top of `scripts/deploy-instabox.sh`. Then:
+
+```bash
+scripts/deploy-instabox.sh              # push, build, restart, publish port 8080, update local skills
+scripts/deploy-instabox.sh --no-start   # install only; only one bot may hold the Slack connection
+```
+
+It refuses to deploy while a shepherd run is live (`--force` overrides). The first start creates a registration
+token: the box keeps its hash and `~/.config/pr-shepherd/config` keeps the value, so the ship skill no longer sends
+your `gh` token. On another machine, run `PR_SHEPHERD_TOKEN=… scripts/install-local.sh --url … --org …`.
+
+Logs: `instabox exec pr-shepherd -- 'journalctl -u pr-shepherd -n 80 --no-pager'`. To rotate a credential, run
+`instabox secrets set <NAME> --org <org> --host …`; its placeholder stays the same.
+
 ## Build from source / maintainers
 
 **Deploy from the working tree** (unreleased changes, a customized review skill, a dev environment):
@@ -358,7 +378,7 @@ local-skills/
   pr-shepherd-ship/ local skill: open a PR and register it (+ guard.sh hook)
   pr-shepherd-slack/ local skill: send the bot's Slack commands as the owner (status, tell, set, merge, …)
 migrations/       forward-only SQL
-scripts/          deploy.sh deployment-url.sh update-secret.sh release.sh slack-manifest.sh install-local.sh docker-entrypoint.sh fake-reviewer.ts
+scripts/          deploy.sh deploy-instabox.sh instabox-provision.sh instabox-run.sh deployment-url.sh update-secret.sh release.sh slack-manifest.sh install-local.sh docker-entrypoint.sh fake-reviewer.ts
 .github/workflows/ ci.yml, release.yml
 insta.template.yaml  InstaCloud template (pr-shepherd)
 test/             vitest; fixtures in the reply formats of real reviewer bots (synthetic content)

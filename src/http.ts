@@ -1,6 +1,7 @@
 // HTTP surface (DESIGN §5.2, §11): GET /livez, GET /healthz and POST /prs. TLS terminates at the platform ingress.
 // /livez = process up and DB answering (platform healthcheck; not blocked by the async credential checks);
 // /healthz = full readiness (DB, credentials, disk).
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { statfs } from 'node:fs/promises';
 import { parsePrRef } from './commands.js';
@@ -16,6 +17,9 @@ export type HttpDeps = {
   db: Db;
   credentials: () => CredentialStatus | undefined;
   github: Pick<GithubPort, 'verifyOwnerToken'>;
+  // SHA-256 (hex) of the registration token. When set it replaces the owner's GitHub token on POST /prs, so a
+  // compromised host never sees that token.
+  registerTokenSha256?: string;
   register: (ref: PrRef) => Promise<RegisterResult>;
 };
 
@@ -72,12 +76,19 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+function matchesSha256(token: string, expectedHex: string): boolean {
+  const got = createHash('sha256').update(token).digest();
+  const want = Buffer.from(expectedHex, 'hex');
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
 async function postPrs(req: IncomingMessage, deps: HttpDeps): Promise<{ status: number; body: unknown }> {
   if (Number(req.headers['content-length'] ?? 0) > MAX_BODY) throw new HttpError(413, 'body too large');
   // The token is only ever hashed for the cache (github.ts); never logged.
   const token = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
   const raw = await readBody(req);
-  if (!token || !(await deps.github.verifyOwnerToken(token))) throw new HttpError(401, 'unauthorized');
+  const authorized = token && (deps.registerTokenSha256 ? matchesSha256(token, deps.registerTokenSha256) : await deps.github.verifyOwnerToken(token));
+  if (!authorized) throw new HttpError(401, 'unauthorized');
   let body: unknown;
   try {
     body = JSON.parse(raw);
