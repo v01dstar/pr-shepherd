@@ -1,7 +1,7 @@
 // Slack adapter over Bolt Socket Mode (DESIGN §5.3 thread replies, §7.1 / §9 commands).
 // Routing is a pure function (routeEvent) so it is testable without Bolt; the port is built over a
 // minimal client interface so tests can pass a fake.
-import { App } from '@slack/bolt';
+import { App, webApi } from '@slack/bolt';
 import type { Command, SlackHandlers, SlackMessage, SlackPort } from './contracts.js';
 import type { Config } from './config.js';
 import { parseCommand } from './commands.js';
@@ -215,10 +215,12 @@ export async function createSlack(opts: {
   appToken: string;
   handlers: SlackHandlers;
 }): Promise<SlackPort & { start(): Promise<void>; stop(): Promise<void>; reconnect(): Promise<void>; botUserId: string }> {
-  const app = new App({ token: opts.botToken, appToken: opts.appToken, socketMode: true });
-  const auth = await app.client.auth.test();
+  // A token given per call (Bolt's own auth.test) also goes in the request body, where instabox's proxy cannot swap
+  // a Secret placeholder and Slack rejects it. So verify with a client-level token and hand Bolt the result.
+  const auth = await new webApi.WebClient(opts.botToken).auth.test();
   if (!auth.user_id) throw new Error('Slack auth.test returned no user_id');
   const botUserId = auth.user_id;
+  const app = new App({ token: opts.botToken, appToken: opts.appToken, socketMode: true, tokenVerificationEnabled: false, botId: auth.bot_id, botUserId });
   const port = createSlackPort(app.client as unknown as SlackApi);
   let ctx: RouteCtx | null = null;
   let stopped = false;
