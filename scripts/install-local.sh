@@ -73,7 +73,8 @@ done
 step "config"
 if [[ $UNINSTALL -eq 0 ]]; then
   mkdir -p "$CONF_DIR"
-  (umask 077; : > "$CONF")
+  : > "$CONF"
+  chmod 600 "$CONF"
   printf 'PR_SHEPHERD_URL=%s\nPR_SHEPHERD_ORG=%s\n' "${URL%/}" "$ORG" > "$CONF"
   [[ -n "$SLACK_BOT" ]] && printf 'PR_SHEPHERD_SLACK_BOT=%s\n' "$SLACK_BOT" >> "$CONF"
   [[ -n "$TOKEN" ]] && printf 'PR_SHEPHERD_TOKEN=%s\n' "$TOKEN" >> "$CONF"
