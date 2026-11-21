@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { Config } from './config.js';
-import type { Exec, GithubPort, GithubReview, PrMeta, PrRef } from './contracts.js';
+import type { Exec, GithubPort, GithubReview, MergeResult, PrMeta, PrRef } from './contracts.js';
 import { log } from './log.js';
 
 const EXEC_TIMEOUT_MS = 60_000;
@@ -11,6 +11,8 @@ const TOKEN_CACHE_MAX = 256;
 const STATES_BATCH = 100;
 const MERGE_POLL_MS = 2_000;
 const MERGE_WAIT_MS = 3 * 60_000;
+// merge-async's answer when the base branch has a merge queue and the request names a method or a commit message.
+const QUEUE_REFUSAL = /not supported when merging via a merge queue/i;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export const defaultExec: Exec = (cmd, args, opts = {}) =>
@@ -224,6 +226,22 @@ export function createGithub(opts: {
     return res.data;
   }
 
+  // Adds the PR to its base branch's merge queue, only while its head is still `sha` (GitHub checks it).
+  async function enqueue(ref: PrRef, sha: string): Promise<MergeResult> {
+    const [owner, name] = checkRepo(ref.repo);
+    try {
+      const q = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id}}}`;
+      const data = await graphql<{ repository: { pullRequest: { id: string } | null } | null }>(q, { owner, name, number: ref.number });
+      const id = data.repository?.pullRequest?.id;
+      if (!id) return { ok: false, error: `enqueue: PR ${ref.repo}#${ref.number} not found` };
+      const m = `mutation($id:ID!,$sha:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$sha}){mergeQueueEntry{state}}}`;
+      await graphql(m, { id, sha });
+      return { ok: true, queued: true };
+    } catch (e) {
+      return { ok: false, error: `enqueue: ${(e as Error).message}` };
+    }
+  }
+
   // Like `gh pr merge --delete-branch`, except that deleting a branch CLOSES every open PR based on it (GitHub
   // does not retarget them), so those are moved onto the merged PR's base first; any failure keeps the branch.
   async function retargetAndDelete(ref: PrRef, branches: { head: string; base: string }) {
@@ -310,15 +328,17 @@ export function createGithub(opts: {
 
     // PUT .../merge-async, then poll its result. `gh pr merge` and PUT .../merge refuse stacked PRs; this endpoint
     // takes them, and merges every open PR below one (the actuator only merges a PR based on no other open PR).
+    // A base branch with a merge queue refuses the squash and commit message (the queue sets them): the PR is then
+    // enqueued as is, locked to the same SHA.
     async merge(ref, sha, subject, body, branches) {
       const [owner, name] = checkRepo(ref.repo);
       const path = `repos/${owner}/${name}/pulls/${ref.number}/merge-async`;
-      // merge_action default: the base branch's merge queue if it has one, else a direct merge.
       const payload = { merge_method: 'squash', sha, commit_title: subject, commit_message: body };
       let res: AsyncMerge;
       try {
         res = JSON.parse((await gh(['api', path, '--method', 'PUT', '--input', '-'], JSON.stringify(payload))).stdout) as AsyncMerge;
       } catch (e) {
+        if (QUEUE_REFUSAL.test((e as Error).message)) return enqueue(ref, sha);
         // 409: a merge request for this PR is already pending; follow that one.
         const uuid = /HTTP 409/.test((e as Error).message) ? parseJson<AsyncMerge>((e as { stdout?: string }).stdout)?.details?.uuid : undefined;
         if (!uuid) return { ok: false, error: (e as Error).message };
@@ -332,6 +352,7 @@ export function createGithub(opts: {
         await sleep(MERGE_POLL_MS);
         res = JSON.parse((await gh(['api', `${path}/${uuid}`])).stdout) as AsyncMerge;
       }
+      if (res.status === 'failed' && QUEUE_REFUSAL.test(res.details?.message ?? '')) return enqueue(ref, sha);
       if (res.status === 'failed') return { ok: false, error: `merge-async failed: ${res.details?.message ?? 'no message'}` };
       if (res.status === 'enqueued') return { ok: true, queued: true };
       await retargetAndDelete(ref, branches).catch((e: Error) =>
