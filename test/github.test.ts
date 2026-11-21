@@ -198,6 +198,31 @@ describe('merge / postReview / comment / login', () => {
     expect(calls.map((c) => c.args[1])).toEqual([PUT, `${PUT}/u9`]);
   });
 
+  it('merge: a base with a merge queue refuses the squash params; the PR is enqueued at the same SHA (branch kept)', async () => {
+    const refusal = 'Custom merge params are not supported when merging via a merge queue';
+    const respond = (viaFailed: boolean) => (c: Call) => {
+      if (c.args[1] === PUT) {
+        return viaFailed
+          ? JSON.stringify({ status: 'failed', details: { message: refusal } })
+          : new Error(`gh api repos/o/r/pulls/5/merge-async failed: ${refusal} (HTTP 422)`);
+      }
+      if (c.args.some((a) => a.startsWith('query=query'))) return JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_5' } } } });
+      return JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { state: 'QUEUED' } } } });
+    };
+    for (const viaFailed of [false, true]) {
+      const { exec, calls } = fakeExec(respond(viaFailed));
+      expect(await createGithub({ config, exec, sleep: noSleep }).merge(ref, 'abc', 's', 'b', branches)).toEqual({ ok: true, queued: true });
+      expect(calls.map((c) => c.args[1])).toEqual([PUT, 'graphql', 'graphql']);
+      expect(calls[1]!.args).toContain('number=5');
+      expect(calls[2]!.args.find((a) => a.startsWith('query='))).toMatch(/enqueuePullRequest/);
+      expect(calls[2]!.args).toEqual(expect.arrayContaining(['id=PR_5', 'sha=abc']));
+      expect(calls.some((c) => c.args.includes('DELETE'))).toBe(false);
+    }
+
+    const gone = fakeExec((c) => (c.args[1] === PUT ? new Error(`x: ${refusal} (HTTP 422)`) : JSON.stringify({ errors: [{ message: 'Head sha did not match' }] })));
+    expect(await createGithub({ config, exec: gone.exec }).merge(ref, 'abc', 's', 'b', branches)).toEqual({ ok: false, error: 'enqueue: graphql: Head sha did not match' });
+  });
+
   it('merge: failed result, HTTP errors and a never-ending pending become {ok:false}', async () => {
     const failed = createGithub({ config, sleep: noSleep, exec: fakeExec((c) =>
       c.args[1] === PUT ? JSON.stringify({ status: 'pending', details: { uuid: 'u' } }) : JSON.stringify({ status: 'failed', details: { message: 'Head branch was modified' } }),
